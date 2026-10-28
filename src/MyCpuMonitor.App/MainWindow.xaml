@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="MyCpuMonitor.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="My CPU Monitor">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+    <StackPanel Margin="24" Spacing="8">
+        <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="My CPU Monitor" />
+        <TextBlock x:Name="InfoText" IsTextSelectionEnabled="True" FontFamily="Consolas" />
+    </StackPanel>
+</Window>

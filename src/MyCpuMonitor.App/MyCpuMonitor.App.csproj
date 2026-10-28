@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>MyCpuMonitor</RootNamespace>
+    <AssemblyName>MyCpuMonitor</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <UseWinUI>true</UseWinUI>
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <WindowsPackageType>None</WindowsPackageType>
+    <!-- Self-contained WinAppSDK requires a RID (build with -r win-x64 / win-arm64). -->
+    <WindowsAppSDKSelfContained Condition="'$(RuntimeIdentifier)' != ''">true</WindowsAppSDKSelfContained>
+    <!-- Custom Main: elevation gate must run before any XAML initialization. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <!-- Not packable itself: shipped as the payload of MyCpuMonitor.Launcher (dotnet tool). -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Component packages instead of the Microsoft.WindowsAppSDK meta-package: avoids ~45 MB of AI/ML/Search payload. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.6.4" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="2.6.4" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+  </ItemGroup>
+
+  <!-- Unpackaged publish omits the project .pri (compiled XAML + resources); the MSIX tooling only ships it in packages. -->
+  <Target Name="PublishProjectPri" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="'$(AppxPackage)' != 'true'">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(ProjectPriFullPath)" RelativePath="$(ProjectPriFileName)" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+
+</Project>
