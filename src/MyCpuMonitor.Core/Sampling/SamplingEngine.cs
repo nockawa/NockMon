@@ -55,6 +55,9 @@ public sealed class SamplingEngine : IDisposable
 
     public bool IsRunning => _thread is not null;
 
+    /// <summary>Wall time spent producing the last published sample (probe + processing + history).</summary>
+    public TimeSpan LastSampleDuration { get; private set; }
+
     /// <summary>Changes interval/retention. History is cleared (its slots are tied to the interval).</summary>
     public void Configure(TimeSpan interval, TimeSpan retention)
     {
@@ -95,6 +98,7 @@ public sealed class SamplingEngine : IDisposable
     {
         lock (_sampleLock)
         {
+            var start = Stopwatch.GetTimestamp();
             _probe.Collect(_raw);
             if (!_processor.Process(_raw, _back))
                 return false;
@@ -107,6 +111,7 @@ public sealed class SamplingEngine : IDisposable
                 _front.SampleIndex = _history.TotalSamples;
                 _history.Append(_front);
             }
+            LastSampleDuration = Stopwatch.GetElapsedTime(start);
         }
         Sampled?.Invoke();
         return true;

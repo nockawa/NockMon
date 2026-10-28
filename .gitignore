@@ -6,3 +6,4 @@ artifacts/
 *.user
 *.DotSettings.user
 TestResults/
+tools/profiling/out/

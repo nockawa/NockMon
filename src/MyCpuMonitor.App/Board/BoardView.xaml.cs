@@ -40,14 +40,38 @@ public sealed partial class BoardView : UserControl
         InitializeComponent();
     }
 
-    /// <summary>Creates the content of a widget. Defaults to a placeholder.</summary>
-    public Func<WidgetConfig, UIElement> ContentFactory { get; set; } = WidgetContentFactory.CreatePlaceholder;
+    /// <summary>Creates the content of a widget. Set before assigning <see cref="Layout"/>.</summary>
+    internal Func<WidgetConfig, UIElement>? ContentFactory { get; set; }
 
     /// <summary>Raised when the user moved, resized or removed a widget.</summary>
     public event EventHandler? LayoutEdited;
 
+    /// <summary>Raised when a widget changed its own configuration outside the edit dialog (e.g. table sort).</summary>
+    public event EventHandler? WidgetConfigChanged;
+
     /// <summary>Raised when the user asks to configure a widget.</summary>
-    public event Action<WidgetConfig>? ConfigureRequested;
+    internal event Action<WidgetConfig>? ConfigureRequested;
+
+    /// <summary>Pulls fresh data into every widget.</summary>
+    public void RefreshWidgets()
+    {
+        foreach (var host in _hosts)
+            host.Widget?.Refresh();
+    }
+
+    /// <summary>Replaces a widget's configuration (same position in the layout) and recreates its content.</summary>
+    internal void ReplaceWidget(WidgetConfig old, WidgetConfig replacement)
+    {
+        if (_layout is null)
+            return;
+        var index = _layout.Widgets.IndexOf(old);
+        if (index < 0)
+            return;
+        _layout.Widgets[index] = replacement;
+        Rebuild();
+        RefreshWidgets();
+        LayoutEdited?.Invoke(this, EventArgs.Empty);
+    }
 
     public int VisibleColumns { get; private set; }
     public int VisibleRows { get; private set; }
@@ -95,6 +119,7 @@ public sealed partial class BoardView : UserControl
         foreach (var widget in _layout.Widgets)
             AddHost(widget);
         UpdateSurface();
+        RefreshWidgets();
     }
 
     /// <summary>Bounds of the area the user can place widgets in (visible cells, or unbounded when the board scrolls).</summary>
@@ -104,7 +129,10 @@ public sealed partial class BoardView : UserControl
 
     private void AddHost(WidgetConfig widget)
     {
-        var host = new WidgetHost(widget, ContentFactory(widget), Surface) { IsEditing = _isEditing };
+        var content = ContentFactory?.Invoke(widget) ?? new TextBlock { Text = widget.Title };
+        var host = new WidgetHost(widget, content, Surface) { IsEditing = _isEditing };
+        if (host.Widget is not null)
+            host.Widget.ConfigChanged += () => WidgetConfigChanged?.Invoke(this, EventArgs.Empty);
         host.DragStarted += OnDragStarted;
         host.DragDelta += OnDragDelta;
         host.DragCompleted += OnDragCompleted;

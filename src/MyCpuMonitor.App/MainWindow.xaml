@@ -91,7 +91,37 @@
                     VerticalAlignment="Center"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     Style="{StaticResource CaptionTextBlockStyle}"
-                    Text="Drag to move, drag the corner to resize." />
+                    Text="Drag to move, drag the corner to resize, gear to configure." />
+            </StackPanel>
+
+            <StackPanel
+                Grid.Column="2"
+                Orientation="Horizontal"
+                Spacing="8">
+                <TextBlock
+                    x:Name="StatusText"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}" />
+                <ComboBox
+                    x:Name="CpuScalePicker"
+                    MinWidth="170"
+                    SelectionChanged="OnCpuScaleChanged"
+                    ToolTipService.ToolTip="% of total: 100% = all logical processors busy (Task Manager). CPUs: logical processors used, 1.00 = one fully busy.">
+                    <ComboBoxItem Content="CPU: % of total" Tag="Machine" />
+                    <ComboBoxItem Content="CPU: CPUs" Tag="Cpus" />
+                </ComboBox>
+                <ComboBox
+                    x:Name="IntervalPicker"
+                    MinWidth="100"
+                    SelectionChanged="OnIntervalChanged"
+                    ToolTipService.ToolTip="Sampling interval (changing it clears the history)">
+                    <ComboBoxItem Content="250 ms" Tag="250" />
+                    <ComboBoxItem Content="500 ms" Tag="500" />
+                    <ComboBoxItem Content="1 s" Tag="1000" />
+                    <ComboBoxItem Content="2 s" Tag="2000" />
+                    <ComboBoxItem Content="5 s" Tag="5000" />
+                </ComboBox>
             </StackPanel>
         </Grid>
 
@@ -104,6 +134,7 @@
         <board:BoardView
             x:Name="Board"
             Grid.Row="2"
-            LayoutEdited="OnBoardLayoutEdited" />
+            LayoutEdited="OnBoardLayoutEdited"
+            WidgetConfigChanged="OnWidgetConfigChanged" />
     </Grid>
 </Window>

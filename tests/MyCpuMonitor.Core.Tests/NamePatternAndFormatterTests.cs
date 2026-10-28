@@ -30,11 +30,18 @@ public class MetricFormatterTests
     public MetricFormatterTests() => CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 
     [Theory]
-    [InlineData(CpuScale.Machine, 2.0, 8, 25.0)]
-    [InlineData(CpuScale.PerCore, 2.0, 8, 200.0)]
-    [InlineData(CpuScale.Machine, 1.0, 0, 0.0)]
-    public void CpuPercent(CpuScale scale, double cores, int logical, double expected) =>
-        Assert.Equal(expected, MetricFormatter.CpuPercent(cores, scale, logical), 9);
+    [InlineData(2.0, 8, 25.0)]
+    [InlineData(1.0, 0, 0.0)]
+    public void CpuPercent(double cpus, int logical, double expected) =>
+        Assert.Equal(expected, MetricFormatter.CpuPercent(cpus, logical), 9);
+
+    [Theory]
+    [InlineData(CpuScale.Machine, 2.0, "6.3 %")]
+    [InlineData(CpuScale.Cpus, 2.0, "2.00 CPUs")]
+    [InlineData(CpuScale.Cpus, 0.071, "0.07 CPUs")]
+    [InlineData(CpuScale.Cpus, 12.44, "12.4 CPUs")]
+    public void Cpu(CpuScale scale, double cpus, string expected) =>
+        Assert.Equal(expected, MetricFormatter.Format(cpus, MetricUnit.Cpu, scale, 32));
 
     [Theory]
     [InlineData(0, "0 B")]
@@ -49,6 +56,7 @@ public class MetricFormatterTests
     public void Units()
     {
         Assert.Equal("50.0 %", MetricFormatter.Format(2, MetricUnit.Cpu, CpuScale.Machine, 4));
+        Assert.Equal("2.00 CPUs", MetricFormatter.Format(2, MetricUnit.Cpu, CpuScale.Cpus, 4));
         Assert.Equal("1,234/s", MetricFormatter.Format(1234, MetricUnit.PerSecond, CpuScale.Machine, 4));
         Assert.Equal("2.5/s", MetricFormatter.Format(2.5, MetricUnit.PerSecond, CpuScale.Machine, 4));
         Assert.Equal("1.00 KB/s", MetricFormatter.Format(1024, MetricUnit.BytesPerSecond, CpuScale.Machine, 4));

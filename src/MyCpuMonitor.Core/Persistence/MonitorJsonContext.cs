@@ -11,5 +11,6 @@ namespace MyCpuMonitor.Core.Persistence;
     AllowTrailingCommas = true,
     ReadCommentHandling = System.Text.Json.JsonCommentHandling.Skip)]
 [JsonSerializable(typeof(LayoutDocument))]
+[JsonSerializable(typeof(WidgetConfig))]
 [JsonSerializable(typeof(AppSettings))]
 internal sealed partial class MonitorJsonContext : JsonSerializerContext;

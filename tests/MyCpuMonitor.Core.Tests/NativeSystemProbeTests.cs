@@ -91,6 +91,6 @@ public class NativeSystemProbeTests
         // One spinning thread ≈ 1 core (scheduler noise tolerated).
         Assert.InRange(cpu, 0.7, 1.5);
         Assert.InRange(system, 0.7, logical);
-        Assert.InRange(MetricFormatter.CpuPercent(cpu, CpuScale.PerCore, logical), 70, 150);
+        Assert.InRange(MetricFormatter.CpuPercent(cpu, logical), 70.0 / logical, 150.0 / logical);
     }
 }

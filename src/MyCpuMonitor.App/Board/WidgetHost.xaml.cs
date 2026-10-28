@@ -32,11 +32,12 @@ public sealed partial class WidgetHost : UserControl
         Config = config;
         DragReference = dragReference;
         Body.Content = content;
+        Widget = content as Widgets.IMonitorWidget;
         UpdateTitle();
-        ConfigureButton.IsEnabled = false; // Widget configuration: phase 4.
     }
 
     public WidgetConfig Config { get; }
+    public Widgets.IMonitorWidget? Widget { get; }
     public UIElement DragReference { get; }
     public bool IsDragging => _dragKind is not null;
 

@@ -110,10 +110,10 @@ public sealed class PersistenceTests : IDisposable
         var store = new SettingsStore(path);
         Assert.Equal(1000, store.Load().SampleIntervalMs);
 
-        store.Save(new AppSettings { SampleIntervalMs = 250, CpuScale = CpuScale.PerCore, ActiveLayout = "Work" });
+        store.Save(new AppSettings { SampleIntervalMs = 250, CpuScale = CpuScale.Cpus, ActiveLayout = "Work" });
         var back = store.Load();
         Assert.Equal(250, back.SampleIntervalMs);
-        Assert.Equal(CpuScale.PerCore, back.CpuScale);
+        Assert.Equal(CpuScale.Cpus, back.CpuScale);
         Assert.DoesNotContain("sampleInterval\"", File.ReadAllText(path));
 
         File.WriteAllText(path, "garbage");

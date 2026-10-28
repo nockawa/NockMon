@@ -79,6 +79,16 @@ public sealed class LayoutSession
         SetCurrent(LoadInitial());
     }
 
+    /// <summary>
+    /// Persists a change made outside an edit session (e.g. sorting a table by clicking its header).
+    /// During an edit session the change is part of the session: saved on commit, reverted on cancel.
+    /// </summary>
+    public void SaveCurrent()
+    {
+        if (!IsEditing)
+            _store.Save(Current);
+    }
+
     public void BeginEdit()
     {
         EnsureNotEditing();

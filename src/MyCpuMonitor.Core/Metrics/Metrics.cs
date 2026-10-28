@@ -3,7 +3,7 @@ namespace MyCpuMonitor.Core.Metrics;
 public enum MetricUnit
 {
     Text,
-    /// <summary>CPU expressed in cores (1.0 = one logical processor fully busy). Displayed according to <see cref="CpuScale"/>.</summary>
+    /// <summary>CPU expressed in logical CPUs used (1.0 = one logical processor fully busy). Displayed according to <see cref="CpuScale"/>.</summary>
     Cpu,
     Bytes,
     BytesPerSecond,
@@ -12,13 +12,13 @@ public enum MetricUnit
     Timestamp,
 }
 
-/// <summary>How CPU values are displayed. Stored values are always in cores.</summary>
+/// <summary>How CPU values are displayed. Stored values are always in logical CPUs used.</summary>
 public enum CpuScale
 {
-    /// <summary>100% = all logical processors busy (Task Manager).</summary>
+    /// <summary>Percentage of the machine: 100% = all logical processors busy (Task Manager).</summary>
     Machine,
-    /// <summary>100% = one logical processor busy.</summary>
-    PerCore,
+    /// <summary>Logical CPUs used: 1.00 = one logical processor busy, max = logical processor count.</summary>
+    Cpus,
 }
 
 /// <summary>Per-process values: table columns, sort keys and (for <see cref="MetricInfo.HasHistory"/>) chart series.</summary>
@@ -100,6 +100,15 @@ public static class MetricCatalog
     ];
 
     public static int HistoryIndexOf(ProcessField field) => Array.IndexOf(ProcessHistoryFields, field);
+
+    /// <summary>Default table column width in effective pixels.</summary>
+    public static double DefaultColumnWidth(ProcessField field) => field switch
+    {
+        ProcessField.Name => 180,
+        ProcessField.Pid or ProcessField.ParentPid or ProcessField.SessionId or ProcessField.BasePriority or ProcessField.Instances => 64,
+        ProcessField.StartTime => 120,
+        _ => 84,
+    };
 
     public static MetricInfo Get(ProcessField field) => field switch
     {

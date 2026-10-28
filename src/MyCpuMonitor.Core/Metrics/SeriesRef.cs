@@ -10,20 +10,26 @@ namespace MyCpuMonitor.Core.Metrics;
 public abstract record SeriesRef
 {
     public abstract MetricInfo Info { get; }
+
+    /// <summary>Label used when the user gave none.</summary>
+    public abstract string DefaultLabel { get; }
 }
 
 public sealed record SystemSeries(SystemMetric Metric) : SeriesRef
 {
     public override MetricInfo Info => MetricCatalog.Get(Metric);
+    public override string DefaultLabel => Info.DisplayName;
 }
 
 public sealed record CoreSeries(CoreMetric Metric, int Core) : SeriesRef
 {
     public override MetricInfo Info => MetricCatalog.Get(Metric);
+    public override string DefaultLabel => $"Core {Core} {Info.ShortName}";
 }
 
 /// <summary>Sum of <paramref name="Field"/> over all processes whose image name matches <paramref name="Pattern"/> (see <see cref="Model.NamePattern"/>).</summary>
 public sealed record ProcessSeries(ProcessField Field, string Pattern) : SeriesRef
 {
     public override MetricInfo Info => MetricCatalog.Get(Field);
+    public override string DefaultLabel => $"{Pattern} {Info.ShortName}";
 }

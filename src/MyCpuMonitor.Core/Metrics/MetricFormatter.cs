@@ -6,12 +6,9 @@ public static class MetricFormatter
 {
     private static readonly string[] ByteUnits = ["B", "KB", "MB", "GB", "TB"];
 
-    /// <summary>Converts a CPU value in cores to a percentage for the given scale.</summary>
-    public static double CpuPercent(double cores, CpuScale scale, int logicalProcessors) => scale switch
-    {
-        CpuScale.PerCore => cores * 100.0,
-        _ => logicalProcessors > 0 ? cores * 100.0 / logicalProcessors : 0,
-    };
+    /// <summary>Converts logical CPUs used to a percentage of the machine.</summary>
+    public static double CpuPercent(double cpus, int logicalProcessors) =>
+        logicalProcessors > 0 ? cpus * 100.0 / logicalProcessors : 0;
 
     public static string Format(double value, MetricUnit unit, CpuScale scale, int logicalProcessors)
     {
@@ -20,7 +17,8 @@ public static class MetricFormatter
         var c = CultureInfo.CurrentCulture;
         return unit switch
         {
-            MetricUnit.Cpu => CpuPercent(value, scale, logicalProcessors).ToString("0.0", c) + " %",
+            MetricUnit.Cpu when scale == CpuScale.Cpus => value.ToString(Math.Abs(value) < 10 ? "0.00" : "0.0", c) + " CPUs",
+            MetricUnit.Cpu => CpuPercent(value, logicalProcessors).ToString("0.0", c) + " %",
             MetricUnit.Bytes => FormatBytes(value),
             MetricUnit.BytesPerSecond => FormatBytes(value) + "/s",
             MetricUnit.PerSecond => value.ToString(value < 10 && value != 0 ? "0.0" : "#,0", c) + "/s",

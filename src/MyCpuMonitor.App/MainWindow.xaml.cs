@@ -1,6 +1,11 @@
+using System.Globalization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using MyCpuMonitor.Board;
 using MyCpuMonitor.Core.Layout;
+using MyCpuMonitor.Core.Metrics;
+using MyCpuMonitor.Editing;
+using MyCpuMonitor.Monitoring;
 using MyCpuMonitor.Shell;
 using Windows.Graphics;
 
@@ -9,12 +14,22 @@ namespace MyCpuMonitor;
 public sealed partial class MainWindow : Window
 {
     private readonly LayoutSession _session;
+    private readonly MonitorService _monitor;
     private bool _updatingPicker;
 
-    public MainWindow(LayoutSession session)
+    public MainWindow(LayoutSession session, MonitorService monitor)
     {
         _session = session;
+        _monitor = monitor;
         InitializeComponent();
+
+        Board.ContentFactory = config => WidgetContentFactory.Create(config, _monitor);
+        Board.ConfigureRequested += OnConfigureRequested;
+        _monitor.Updated += OnMonitorUpdated;
+
+        CpuScalePicker.SelectedIndex = (int)session.Settings.CpuScale;
+        IntervalPicker.SelectedItem = IntervalPicker.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(i => int.Parse((string)i.Tag, CultureInfo.InvariantCulture) == session.Settings.SampleIntervalMs);
 
         var scale = RootGrid.XamlRoot?.RasterizationScale ?? Win32.GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
         AppWindow.Resize(new SizeInt32((int)(1400 * scale), (int)(860 * scale)));
@@ -56,6 +71,53 @@ public sealed partial class MainWindow : Window
         if (_updatingPicker || LayoutPicker.SelectedItem is not string name || name == _session.Current.Name)
             return;
         Run(() => _session.Switch(name));
+    }
+
+    // --- Monitoring -------------------------------------------------------------------------------
+
+    private void OnMonitorUpdated()
+    {
+        Board.RefreshWidgets();
+        var engine = _monitor.Engine;
+        var (processes, interval) = engine.Read(0, static (_, s, _) => (s.ProcessCount, s.Interval));
+        StatusText.Text = string.Create(CultureInfo.CurrentCulture,
+            $"{processes} processes · {_monitor.LogicalProcessors} CPUs · sample {engine.LastSampleDuration.TotalMilliseconds:0.0} ms / {interval.TotalMilliseconds:0} ms");
+    }
+
+    private void OnCpuScaleChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CpuScalePicker.SelectedItem is not ComboBoxItem { Tag: string tag })
+            return;
+        var scale = Enum.Parse<CpuScale>(tag);
+        _monitor.CpuScale = scale;
+        if (_session.Settings.CpuScale != scale)
+        {
+            _session.Settings.CpuScale = scale;
+            _session.SaveSettings();
+        }
+    }
+
+    private void OnIntervalChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (IntervalPicker.SelectedItem is not ComboBoxItem { Tag: string tag })
+            return;
+        var ms = int.Parse(tag, CultureInfo.InvariantCulture);
+        if (_session.Settings.SampleIntervalMs == ms)
+            return;
+        _session.Settings.SampleIntervalMs = ms;
+        _session.SaveSettings();
+        _monitor.Engine.Configure(_session.Settings.SampleInterval, _session.Settings.HistoryRetention);
+    }
+
+    private void OnWidgetConfigChanged(object? sender, EventArgs e) => Run(_session.SaveCurrent);
+
+    private async void OnConfigureRequested(WidgetConfig config)
+    {
+        var context = _monitor.Engine.Read(_monitor.LogicalProcessors,
+            static (cores, _, history) => new EditorContext(history.ProcessNames.ToList(), cores));
+        var edited = await WidgetEditor.EditAsync(Content.XamlRoot, config, context);
+        if (edited is not null)
+            Board.ReplaceWidget(config, edited);
     }
 
     // --- Edit session -----------------------------------------------------------------------------

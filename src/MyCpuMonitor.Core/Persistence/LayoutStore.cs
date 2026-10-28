@@ -24,6 +24,11 @@ public sealed class LayoutStore(string directory)
         return layout;
     }
 
+    /// <summary>Deep copy through JSON (same rules as persistence), for edit-then-apply dialogs.</summary>
+    public static T Clone<T>(T widget) where T : WidgetConfig =>
+        (T)JsonSerializer.Deserialize(JsonSerializer.Serialize<WidgetConfig>(widget, MonitorJsonContext.Default.WidgetConfig),
+            MonitorJsonContext.Default.WidgetConfig)!;
+
     /// <summary>Names of the readable layouts, sorted. Unreadable files are skipped.</summary>
     public IReadOnlyList<string> List()
     {

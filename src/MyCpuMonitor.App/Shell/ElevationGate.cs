@@ -28,8 +28,8 @@ internal static partial class ElevationGate
     {
         if (IsElevated)
             return true;
-#if DEBUG
-        // Development only: UI work without a UAC prompt per launch (elevation-dependent features degrade).
+#if DEBUG || ELEVATION_BYPASS
+        // Development/profiling builds only: no UAC prompt per launch (elevation-dependent features degrade).
         if (Environment.GetEnvironmentVariable("MYCPUMON_SKIP_ELEVATION") == "1")
             return true;
 #endif
