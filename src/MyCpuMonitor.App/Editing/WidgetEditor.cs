@@ -24,6 +24,7 @@ internal static class WidgetEditor
             ProcessTableWidgetConfig t => BuildTable(panel, t),
             ChartWidgetConfig c => BuildChart(panel, c, context),
             ValueWidgetConfig v => BuildValue(panel, v, context),
+            CpuGridWidgetConfig g => BuildCpuGrid(panel, g),
             _ => throw new ArgumentException($"Unknown widget {clone.GetType().Name}.", nameof(config)),
         };
 
@@ -163,6 +164,34 @@ internal static class WidgetEditor
                 return error;
             config.Source = source;
             config.SparklineSeconds = (int)((ComboBoxItem)window.SelectedItem).Tag;
+            return null;
+        };
+    }
+
+    private static Func<string?> BuildCpuGrid(StackPanel panel, CpuGridWidgetConfig config)
+    {
+        var metric = new ComboBox { Header = "Metric", MinWidth = 220 };
+        foreach (var m in Enum.GetValues<CoreMetric>())
+            metric.Items.Add(new ComboBoxItem { Content = MetricCatalog.Get(m).DisplayName, Tag = m });
+        metric.SelectedIndex = (int)config.Metric;
+        var kernel = new ToggleSwitch { Header = "Shade kernel time (usage only)", IsOn = config.ShowKernel };
+        metric.SelectionChanged += (_, _) => kernel.IsEnabled = (CoreMetric)((ComboBoxItem)metric.SelectedItem).Tag == CoreMetric.Usage;
+        kernel.IsEnabled = config.Metric == CoreMetric.Usage;
+        var window = WindowPicker("Time window", config.WindowSeconds);
+        var columns = new NumberBox
+        {
+            Header = "Columns (0 = automatic)", Value = config.Columns, Minimum = 0, Maximum = 256,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 160,
+        };
+
+        panel.Children.Add(Row(metric, window));
+        panel.Children.Add(Row(kernel, columns));
+        return () =>
+        {
+            config.Metric = (CoreMetric)((ComboBoxItem)metric.SelectedItem).Tag;
+            config.ShowKernel = kernel.IsOn;
+            config.WindowSeconds = (int)((ComboBoxItem)window.SelectedItem).Tag;
+            config.Columns = double.IsNaN(columns.Value) ? 0 : (int)columns.Value;
             return null;
         };
     }

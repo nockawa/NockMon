@@ -12,6 +12,7 @@ public static class WidgetContentFactory
         ProcessTableWidgetConfig table => new ProcessTableWidget(table, monitor),
         ChartWidgetConfig chart => new ChartWidget(chart, monitor),
         ValueWidgetConfig value => new ValueWidget(value, monitor),
+        CpuGridWidgetConfig grid => new CpuGridWidget(grid, monitor),
         _ => throw new ArgumentException($"Unknown widget {config.GetType().Name}.", nameof(config)),
     };
 }

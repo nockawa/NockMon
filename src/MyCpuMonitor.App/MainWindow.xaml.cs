@@ -31,8 +31,17 @@ public sealed partial class MainWindow : Window
         SelectByTag(IntervalPicker, session.Settings.SampleIntervalMs);
         SelectByTag(ScanPicker, session.Settings.ScanIntervalMs);
 
-        var scale = RootGrid.XamlRoot?.RasterizationScale ?? Win32.GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
-        AppWindow.Resize(new SizeInt32((int)(1400 * scale), (int)(860 * scale)));
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (!WindowPlacement.TryRestore(hwnd, session.Settings.Window))
+        {
+            var scale = Win32.GetDpiForWindow(hwnd) / 96.0;
+            AppWindow.Resize(new SizeInt32((int)(1400 * scale), (int)(860 * scale)));
+        }
+        AppWindow.Closing += (_, _) =>
+        {
+            session.Settings.Window = WindowPlacement.Capture(hwnd) ?? session.Settings.Window;
+            session.SaveSettings();
+        };
 
         foreach (var kind in WidgetCatalog.Kinds)
         {

@@ -85,6 +85,7 @@ public readonly record struct GridRect(int Column, int Row, int ColumnSpan, int 
 [JsonDerivedType(typeof(ProcessTableWidgetConfig), "processTable")]
 [JsonDerivedType(typeof(ChartWidgetConfig), "chart")]
 [JsonDerivedType(typeof(ValueWidgetConfig), "value")]
+[JsonDerivedType(typeof(CpuGridWidgetConfig), "cpuGrid")]
 public abstract class WidgetConfig
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -139,6 +140,20 @@ public sealed class ChartSeriesConfig
 
     /// <summary>"#RRGGBB"; null = automatic palette.</summary>
     public string? Color { get; set; }
+}
+
+/// <summary>One small graph per logical CPU.</summary>
+public sealed class CpuGridWidgetConfig : WidgetConfig
+{
+    public CoreMetric Metric { get; set; } = CoreMetric.Usage;
+
+    /// <summary>With <see cref="CoreMetric.Usage"/>: shade the kernel part of the usage.</summary>
+    public bool ShowKernel { get; set; } = true;
+
+    public int WindowSeconds { get; set; } = 60;
+
+    /// <summary>Grid columns; 0 = automatic (cells kept close to <see cref="GridArrangement.DefaultAspect"/>).</summary>
+    public int Columns { get; set; }
 }
 
 /// <summary>Single value with sparkline.</summary>

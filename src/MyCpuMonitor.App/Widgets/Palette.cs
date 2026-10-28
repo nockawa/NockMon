@@ -32,6 +32,9 @@ public static class Palette
     public static Color SubtleText(ElementTheme theme) => theme == ElementTheme.Dark ? ColorHelper.FromArgb(0x80, 0xFF, 0xFF, 0xFF) : ColorHelper.FromArgb(0x80, 0, 0, 0);
     public static Color Grid(ElementTheme theme) => theme == ElementTheme.Dark ? ColorHelper.FromArgb(0x24, 0xFF, 0xFF, 0xFF) : ColorHelper.FromArgb(0x1C, 0, 0, 0);
 
+    /// <summary>Light grey outline separating small-multiple cells.</summary>
+    public static Color CellBorder(ElementTheme theme) => theme == ElementTheme.Dark ? ColorHelper.FromArgb(0x40, 0xFF, 0xFF, 0xFF) : ColorHelper.FromArgb(0x30, 0, 0, 0);
+
     public static Color WithAlpha(Color c, byte alpha) => ColorHelper.FromArgb(alpha, c.R, c.G, c.B);
 
     private static Color Rgb(uint v) => ColorHelper.FromArgb(0xFF, (byte)(v >> 16), (byte)(v >> 8), (byte)v);

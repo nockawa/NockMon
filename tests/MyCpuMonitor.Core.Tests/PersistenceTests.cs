@@ -104,6 +104,19 @@ public sealed class PersistenceTests : IDisposable
     }
 
     [Fact]
+    public void Settings_WindowPlacement_RoundTrips()
+    {
+        var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
+        Assert.Null(store.Load().Window);
+
+        store.Save(new AppSettings { Window = new WindowPlacementSettings { Left = -1900, Top = 40, Right = -100, Bottom = 1040, Maximized = true } });
+        var w = store.Load().Window!;
+        Assert.Equal((-1900, 40, -100, 1040, true), (w.Left, w.Top, w.Right, w.Bottom, w.Maximized));
+        Assert.True(w.IsValid);
+        Assert.False(new WindowPlacementSettings { Right = 50, Bottom = 500 }.IsValid);
+    }
+
+    [Fact]
     public void Settings_RoundTrip_AndDefaultsOnCorrupt()
     {
         var path = Path.Combine(_dir, "settings.json");

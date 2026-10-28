@@ -64,6 +64,64 @@ public static class ChartRenderer
         }
     }
 
+    // CreatePolygon needs an exact-length array; cells of a widget share a width, so a per-length cache is allocation-free.
+    [ThreadStatic] private static Dictionary<int, Vector2[]>? _polygons;
+
+    /// <summary>
+    /// Filled area (to zero) of one series, newest sample at the right edge, built as a single polygon (one interop call)
+    /// and downsampled to at most one point per pixel column (bucket maximum, so spikes stay visible). For small multiples.
+    /// </summary>
+    internal static void FillArea(CanvasDrawingSession ds, Rect plot, ReadOnlySpan<float> values, int windowSamples, double yMax, Windows.UI.Color color)
+    {
+        if (values.Length < 2 || plot.Width < 2 || plot.Height < 2)
+            return;
+
+        var right = (float)(plot.X + plot.Width);
+        var bottom = (float)(plot.Y + plot.Height);
+        var top = (float)plot.Y;
+        var scale = (float)(plot.Height / yMax);
+        var dx = (float)(plot.Width / Math.Max(1, windowSamples - 1));
+        var startX = right - (values.Length - 1) * dx;
+
+        // Samples per pixel column (>= 1).
+        var bucket = Math.Max(1, (int)Math.Ceiling(1 / dx));
+        var points = (values.Length + bucket - 1) / bucket;
+        _polygons ??= [];
+        if (!_polygons.TryGetValue(points + 2, out var polygon))
+            _polygons[points + 2] = polygon = new Vector2[points + 2];
+
+        var n = 0;
+        for (var i = 0; i < values.Length; i += bucket)
+        {
+            var end = Math.Min(values.Length, i + bucket);
+            var max = values[i];
+            for (var k = i + 1; k < end; k++)
+                max = Math.Max(max, values[k]);
+            polygon[n++] = new Vector2(startX + (end - 1) * dx, Math.Max(top, bottom - max * scale));
+        }
+        polygon[n++] = new Vector2(right, bottom);
+        polygon[n++] = new Vector2(polygon[0].X, bottom);
+
+        using var geometry = CanvasGeometry.CreatePolygon(ds, polygon);
+        ds.FillGeometry(geometry, color);
+    }
+
+    /// <summary>Area (filled to zero) and line of one series in <paramref name="plot"/>, newest sample at the right edge.</summary>
+    internal static void DrawSeries(CanvasDrawingSession ds, Rect plot, ReadOnlySpan<float> values, int windowSamples, double yMax,
+        Windows.UI.Color color, byte fillAlpha, float lineWidth)
+    {
+        if (values.Length < 2 || plot.Width < 2 || plot.Height < 2)
+            return;
+        var dx = (float)(plot.Width / Math.Max(1, windowSamples - 1));
+        using var area = BuildPath(ds, plot, values, default, false, dx, yMax, closeToBaseline: true);
+        ds.FillGeometry(area, Palette.WithAlpha(color, fillAlpha));
+        if (lineWidth > 0)
+        {
+            using var line = BuildPath(ds, plot, values, default, false, dx, yMax, closeToBaseline: false);
+            ds.DrawGeometry(line, color, lineWidth);
+        }
+    }
+
     private static double ComputeMax(IReadOnlyList<SeriesData> series, MetricUnit unit, bool stacked, MonitorService monitor)
     {
         if (unit == MetricUnit.Cpu && monitor.CpuScale == CpuScale.Machine)

@@ -4,6 +4,21 @@ using MyCpuMonitor.Core.Sampling;
 
 namespace MyCpuMonitor.Core.Settings;
 
+/// <summary>
+/// Restored (non-maximized) window rectangle in physical pixels, workspace coordinates (Win32 WINDOWPLACEMENT),
+/// and whether the window was maximized.
+/// </summary>
+public sealed class WindowPlacementSettings
+{
+    public int Left { get; set; }
+    public int Top { get; set; }
+    public int Right { get; set; }
+    public int Bottom { get; set; }
+    public bool Maximized { get; set; }
+
+    [JsonIgnore] public bool IsValid => Right - Left >= 100 && Bottom - Top >= 100;
+}
+
 public sealed class AppSettings
 {
     /// <summary>Fast rate: system, per-CPU and watched processes.</summary>
@@ -16,6 +31,9 @@ public sealed class AppSettings
     public CpuScale CpuScale { get; set; } = CpuScale.Machine;
     public bool AlwaysOnTop { get; set; }
     public string ActiveLayout { get; set; } = "Default";
+
+    /// <summary>Main window placement at last close; null = default size.</summary>
+    public WindowPlacementSettings? Window { get; set; }
 
     /// <summary>Sampling options from these settings, clamped to valid values.</summary>
     [JsonIgnore]

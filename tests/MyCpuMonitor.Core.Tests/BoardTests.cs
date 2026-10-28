@@ -100,6 +100,39 @@ public class BoardRulesTests
     }
 }
 
+public class GridArrangementTests
+{
+    [Theory]
+    [InlineData(32, 800, 400, 7, 5)]   // 114×80 (1.43); 8×4 is 100×100 (1.0), 6×6 is 133×67 (2.0).
+    [InlineData(32, 1600, 300, 11, 3)] // 145×100 (1.45); 12×3 is 1.33, 16×2 is 0.67.
+    [InlineData(32, 300, 1200, 2, 16)] // 150×75 (2.0); 3×11 is 0.92.
+    [InlineData(1, 100, 100, 1, 1)]
+    [InlineData(0, 100, 100, 0, 0)]
+    public void Auto_PicksCellsClosestToTargetAspect(int count, double w, double h, int columns, int rows) =>
+        Assert.Equal((columns, rows), GridArrangement.Arrange(count, w, h));
+
+    [Fact]
+    public void Fixed_Columns()
+    {
+        Assert.Equal((5, 7), GridArrangement.Arrange(32, 100, 100, columns: 5));
+        Assert.Equal((32, 1), GridArrangement.Arrange(32, 100, 100, columns: 40));
+    }
+
+    [Fact]
+    public void CpuGridConfig_RoundTrips()
+    {
+        var layout = new LayoutDocument
+        {
+            Name = "x",
+            Widgets = [new CpuGridWidgetConfig { Metric = Metrics.CoreMetric.Dpc, ShowKernel = false, WindowSeconds = 300, Columns = 4 }],
+        };
+        var json = LayoutStore.Serialize(layout);
+        Assert.Contains("\"$type\": \"cpuGrid\"", json);
+        var back = Assert.IsType<CpuGridWidgetConfig>(LayoutStore.Deserialize(json).Widgets[0]);
+        Assert.Equal((Metrics.CoreMetric.Dpc, false, 300, 4), (back.Metric, back.ShowKernel, back.WindowSeconds, back.Columns));
+    }
+}
+
 public sealed class LayoutSessionTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "mcm-tests-" + Guid.NewGuid().ToString("N"));
