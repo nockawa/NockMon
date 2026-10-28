@@ -2,7 +2,8 @@ namespace MyCpuMonitor.Core.Model;
 
 /// <summary>
 /// Case-insensitive image name pattern: '*' and '?' wildcards, several alternatives separated by ';'.
-/// An alternative without wildcard nor '.' also matches the name without its ".exe" extension ("devenv" matches "devenv.exe").
+/// An alternative without wildcard also matches the name without its ".exe" extension ("devenv" matches "devenv.exe",
+/// "MyApp.Core" matches "MyApp.Core.exe").
 /// </summary>
 public sealed class NamePattern
 {
@@ -22,7 +23,7 @@ public sealed class NamePattern
         {
             if (Glob(alt, name))
                 return true;
-            if (alt.AsSpan().IndexOfAny('*', '?') < 0 && !alt.Contains('.')
+            if (alt.AsSpan().IndexOfAny('*', '?') < 0
                 && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
                 && name[..^4].Equals(alt, StringComparison.OrdinalIgnoreCase))
                 return true;

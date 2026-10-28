@@ -6,9 +6,10 @@ using MyCpuMonitor.Core.Native;
 namespace MyCpuMonitor.Core.Sampling;
 
 /// <summary>
-/// One NtQuerySystemInformation call for all processes (no handles opened), per-group processor
-/// performance counters, and GetPerformanceInfo. Allocation-free in steady state: the native buffer is
-/// reused and image names are only materialized for processes not seen before.
+/// Full scan: one NtQuerySystemInformation call for all processes (~13 ms with ~600 processes / 15k threads: the
+/// kernel walks every thread). System: per-group processor counters and GetPerformanceInfo (&lt; 0.1 ms).
+/// Watched processes: query handles (~15 µs per process, I/O counters being most of it).
+/// Allocation-free in steady state: the native buffer is reused and image names are only materialized for new processes.
 /// </summary>
 public sealed unsafe class NativeSystemProbe : ISystemProbe
 {
@@ -44,18 +45,76 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
 
     public int LogicalProcessorCount { get; }
 
-    public void Collect(RawSample sample)
+    public TimeSpan Now => Stopwatch.GetElapsedTime(_startTimestamp);
+
+    public void CollectSystem(RawSample sample)
     {
         ObjectDisposedException.ThrowIf(_buffer == null, this);
-        sample.Elapsed = Stopwatch.GetElapsedTime(_startTimestamp);
+        sample.Elapsed = Now;
         sample.WallTimeUtc = DateTime.UtcNow;
-        CollectProcesses(sample);
         CollectCores(sample);
         CollectMemory(sample);
     }
 
-    private void CollectProcesses(RawSample sample)
+    public bool TryOpenProcess(ProcessKey key, out nint handle)
     {
+        handle = Kernel32.OpenProcess(Kernel32.PROCESS_QUERY_LIMITED_INFORMATION | Kernel32.SYNCHRONIZE, false, key.Pid);
+        if (handle == 0)
+            return false;
+        long creation, exit, kernel, user;
+        if (Kernel32.GetProcessTimes(handle, &creation, &exit, &kernel, &user) && creation == key.CreateTime)
+            return true;
+        // Exited and PID reused between the scan and now: not the process we were asked for.
+        Kernel32.CloseHandle(handle);
+        handle = 0;
+        return false;
+    }
+
+    public bool TryReadProcess(nint handle, ref RawProcess counters)
+    {
+        if (Kernel32.WaitForSingleObject(handle, 0) == Kernel32.WAIT_OBJECT_0)
+            return false;
+
+        long creation, exit, kernel, user;
+        if (!Kernel32.GetProcessTimes(handle, &creation, &exit, &kernel, &user))
+            return false;
+        counters.KernelTime = kernel;
+        counters.UserTime = user;
+
+        ProcessMemoryCountersEx memory;
+        memory.cb = (uint)sizeof(ProcessMemoryCountersEx);
+        if (Kernel32.GetProcessMemoryInfo(handle, &memory, memory.cb))
+        {
+            counters.WorkingSet = (long)memory.WorkingSetSize;
+            counters.PrivateBytes = (long)memory.PagefileUsage; // Same source as the scan's PagefileUsage.
+            counters.PagedPool = (long)memory.QuotaPagedPoolUsage;
+            counters.NonPagedPool = (long)memory.QuotaNonPagedPoolUsage;
+            counters.PageFaults = memory.PageFaultCount;
+        }
+
+        IoCounters io;
+        if (Kernel32.GetProcessIoCounters(handle, &io))
+        {
+            counters.ReadOps = (long)io.ReadOperationCount;
+            counters.WriteOps = (long)io.WriteOperationCount;
+            counters.OtherOps = (long)io.OtherOperationCount;
+            counters.ReadBytes = (long)io.ReadTransferCount;
+            counters.WriteBytes = (long)io.WriteTransferCount;
+            counters.OtherBytes = (long)io.OtherTransferCount;
+        }
+
+        uint handles;
+        if (Kernel32.GetProcessHandleCount(handle, &handles))
+            counters.Handles = (int)handles;
+        return true;
+    }
+
+    public void CloseProcess(nint handle) => Kernel32.CloseHandle(handle);
+
+    public void CollectProcesses(RawSample sample)
+    {
+        ObjectDisposedException.ThrowIf(_buffer == null, this);
+        sample.ProcessesElapsed = Now;
         while (true)
         {
             uint required;

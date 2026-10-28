@@ -4,16 +4,19 @@ using MyCpuMonitor.Core.Model;
 namespace MyCpuMonitor.Core.Sampling;
 
 /// <summary>
-/// Turns successive raw cumulative counters into per-interval rates. Allocation-free in steady state.
-/// A process absent from the previous sample but present now was created during the interval: its
-/// counters started at zero, so its whole counters are the delta.
+/// Turns successive raw cumulative counters into per-interval rates. System counters and process scans have
+/// independent baselines (they run at different rates). Allocation-free in steady state.
+/// A process absent from the previous scan but present now was created during the interval: its counters started
+/// at zero, so its whole counters are the delta.
 /// </summary>
 public sealed class SampleProcessor
 {
     private readonly Dictionary<ProcessKey, Previous> _previous = new();
     private RawCore[] _previousCores = [];
-    private TimeSpan _previousElapsed;
-    private bool _hasPrevious;
+    private TimeSpan _previousSystemElapsed;
+    private TimeSpan _previousScanElapsed;
+    private bool _hasSystemBaseline;
+    private bool _hasScanBaseline;
     private long _generation;
 
     private struct Previous
@@ -34,21 +37,48 @@ public sealed class SampleProcessor
     public void Reset()
     {
         _previous.Clear();
-        _hasPrevious = false;
+        _hasSystemBaseline = false;
+        _hasScanBaseline = false;
     }
 
-    /// <summary>Computes <paramref name="output"/> from <paramref name="raw"/>.</summary>
+    /// <summary>Computes cores and system values (except process I/O sums) of <paramref name="output"/>.</summary>
     /// <returns>false for the first sample after construction/reset (baseline only, output not written).</returns>
-    public bool Process(RawSample raw, Snapshot output)
+    public bool ProcessSystem(RawSample raw, Snapshot output)
     {
-        var hadPrevious = _hasPrevious;
-        var dt = raw.Elapsed - _previousElapsed;
-        if (hadPrevious && dt <= TimeSpan.Zero)
+        var hadBaseline = _hasSystemBaseline && _previousCores.Length == raw.Cores.Length;
+        var dt = raw.Elapsed - _previousSystemElapsed;
+        if (hadBaseline && dt <= TimeSpan.Zero)
             throw new ArgumentException("Samples must be strictly increasing in time.", nameof(raw));
 
+        if (hadBaseline)
+        {
+            ComputeCores(raw, output, dt.TotalSeconds);
+            ComputeSystem(raw, output);
+            output.WallTimeUtc = raw.WallTimeUtc;
+            output.Interval = dt;
+            output.LogicalProcessors = raw.Cores.Length;
+        }
+
+        if (_previousCores.Length != raw.Cores.Length)
+            _previousCores = new RawCore[raw.Cores.Length];
+        raw.Cores.CopyTo(_previousCores, 0);
+        _previousSystemElapsed = raw.Elapsed;
+        _hasSystemBaseline = true;
+        return hadBaseline;
+    }
+
+    /// <summary>Computes per-process rates of the scan in <paramref name="raw"/> into <paramref name="output"/>.</summary>
+    /// <returns>false for the first scan after construction/reset (baseline only, output not written).</returns>
+    public bool ProcessScan(RawSample raw, ProcessTable output)
+    {
+        var hadBaseline = _hasScanBaseline;
+        var dt = raw.ProcessesElapsed - _previousScanElapsed;
+        if (hadBaseline && dt <= TimeSpan.Zero)
+            throw new ArgumentException("Scans must be strictly increasing in time.", nameof(raw));
+
         _generation++;
-        if (output.Processes.Length < raw.ProcessCount)
-            output.Processes = new ProcessStats[Math.Max(raw.ProcessCount, output.Processes.Length * 2)];
+        if (output.Items.Length < raw.ProcessCount)
+            output.Items = new ProcessStats[Math.Max(raw.ProcessCount, output.Items.Length * 2)];
 
         double ticks = dt.Ticks, seconds = dt.TotalSeconds;
         double ioOps = 0, ioBytes = 0;
@@ -58,9 +88,9 @@ public sealed class SampleProcessor
             ref var prev = ref CollectionsMarshal.GetValueRefOrAddDefault(_previous, new ProcessKey(r.Pid, r.CreateTime), out _);
             // New entry: prev is all zeros, which is exactly the counters' origin for a process created during the interval.
 
-            if (hadPrevious)
+            if (hadBaseline)
             {
-                ref var s = ref output.Processes[i];
+                ref var s = ref output.Items[i];
                 s.Pid = r.Pid;
                 s.ParentPid = r.ParentPid;
                 s.CreateTime = r.CreateTime;
@@ -109,26 +139,17 @@ public sealed class SampleProcessor
                 _previous.Remove(key);
         }
 
-        if (hadPrevious && _previousCores.Length == raw.Cores.Length)
+        if (hadBaseline)
         {
-            output.ProcessCount = raw.ProcessCount;
-            ComputeCores(raw, output, seconds);
-            ComputeSystem(raw, output, ioOps, ioBytes);
-            output.WallTimeUtc = raw.WallTimeUtc;
+            output.Count = raw.ProcessCount;
             output.Interval = dt;
-            output.LogicalProcessors = raw.Cores.Length;
+            output.WallTimeUtc = raw.WallTimeUtc;
+            output.IoOps = ioOps;
+            output.IoBytes = ioBytes;
         }
-        else
-        {
-            hadPrevious = false;
-        }
-
-        if (_previousCores.Length != raw.Cores.Length)
-            _previousCores = new RawCore[raw.Cores.Length];
-        raw.Cores.CopyTo(_previousCores, 0);
-        _previousElapsed = raw.Elapsed;
-        _hasPrevious = true;
-        return hadPrevious;
+        _previousScanElapsed = raw.ProcessesElapsed;
+        _hasScanBaseline = true;
+        return hadBaseline;
     }
 
     private void ComputeCores(RawSample raw, Snapshot output, double seconds)
@@ -159,10 +180,10 @@ public sealed class SampleProcessor
         }
     }
 
-    private static void ComputeSystem(RawSample raw, Snapshot output, double ioOps, double ioBytes)
+    private static void ComputeSystem(RawSample raw, Snapshot output)
     {
         ref var s = ref output.System;
-        s = default;
+        s.Cpu = s.CpuUser = s.CpuKernel = s.CpuDpc = s.CpuInterrupt = 0;
         foreach (ref readonly var c in output.Cores.AsSpan())
         {
             s.Cpu += c.Usage;
@@ -182,14 +203,12 @@ public sealed class SampleProcessor
         s.Processes = m.Processes;
         s.Threads = m.Threads;
         s.Handles = m.Handles;
-        s.IoOps = ioOps;
-        s.IoBytes = ioBytes;
     }
 
     /// <summary>Cumulative counters never decrease for a given process; clamp defensively.</summary>
-    private static double Delta(long current, long previous) => current >= previous ? current - previous : 0;
+    internal static double Delta(long current, long previous) => current >= previous ? current - previous : 0;
 
-    private static double Delta(uint current, uint previous) => unchecked(current - previous);
+    internal static double Delta(uint current, uint previous) => unchecked(current - previous);
 
     private static double Clamp01(double v) => v < 0 ? 0 : v > 1 ? 1 : v;
 }

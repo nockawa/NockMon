@@ -3,36 +3,59 @@ using MyCpuMonitor.Core.History;
 
 namespace MyCpuMonitor.Core.Sampling;
 
-/// <summary>
-/// Single sampler for the whole app: a dedicated thread reads the probe at a fixed interval
-/// (drift-free deadlines), computes rates outside the lock, then swaps the double-buffered snapshot
-/// and appends to history under the lock. Consumers access data only through <see cref="Read{TState,TResult}"/>.
-/// </summary>
-public sealed class SamplingEngine : IDisposable
+/// <summary>Sampling rates. The scan interval is rounded up to a whole number of sample intervals.</summary>
+public readonly record struct SamplingOptions(TimeSpan Interval, TimeSpan ScanInterval, TimeSpan Retention)
 {
     public static readonly TimeSpan MinInterval = TimeSpan.FromMilliseconds(100);
 
+    /// <summary>Full scans happen every <see cref="ScanEvery"/> samples (rounded up: never scan more often than asked).</summary>
+    public int ScanEvery => Math.Max(1, (int)Math.Ceiling(ScanInterval / Interval - 1e-9));
+
+    public void Validate()
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(Interval, MinInterval, nameof(Interval));
+        ArgumentOutOfRangeException.ThrowIfLessThan(ScanInterval, Interval, nameof(ScanInterval));
+        ArgumentOutOfRangeException.ThrowIfLessThan(Retention, ScanInterval * 2, nameof(Retention));
+    }
+}
+
+/// <summary>
+/// Single sampler for the whole app, on a dedicated thread with drift-free deadlines. Each sample (fast rate) reads
+/// system counters and the watched processes (cheap); every <see cref="SamplingOptions.ScanEvery"/> samples a full
+/// process scan (expensive) refreshes the process table, discovers watched processes and feeds per-name history.
+/// Rates are computed outside the lock; the snapshot swap and history append happen under it.
+/// Consumers access data only through <see cref="Read{TState,TResult}"/>.
+/// </summary>
+public sealed class SamplingEngine : IDisposable
+{
     private readonly ISystemProbe _probe;
     private readonly SampleProcessor _processor = new();
+    private readonly WatchedProcessTracker _watched;
     private readonly RawSample _raw = new();
     private readonly Lock _lock = new();
     private readonly Lock _sampleLock = new();
     private readonly AutoResetEvent _wake = new(false);
     private Snapshot _front = new();
     private Snapshot _back = new();
+    private ProcessTable _currentTable;
+    private ProcessTable _spareTable = new();
+    private bool _tableHasRates;
+    private int _samplesUntilScan;
     private HistoryStore _history;
-    private TimeSpan _interval;
-    private TimeSpan _retention;
+    private SamplingOptions _options;
+    private string[]? _pendingPatterns;
     private Thread? _thread;
     private volatile bool _stopping;
 
-    public SamplingEngine(ISystemProbe probe, TimeSpan interval, TimeSpan retention)
+    public SamplingEngine(ISystemProbe probe, SamplingOptions options)
     {
+        options.Validate();
         _probe = probe;
-        Validate(interval, retention);
-        _interval = interval;
-        _retention = retention;
+        _watched = new WatchedProcessTracker(probe);
+        _options = options;
         _history = CreateHistory();
+        _currentTable = _front.Table;
+        _back.Table = _currentTable;
     }
 
     /// <summary>Raised on the sampler thread after each sample is published.</summary>
@@ -43,34 +66,45 @@ public sealed class SamplingEngine : IDisposable
 
     public int LogicalProcessorCount => _probe.LogicalProcessorCount;
 
-    public TimeSpan Interval
+    public SamplingOptions Options
     {
-        get { lock (_lock) return _interval; }
+        get { lock (_lock) return _options; }
     }
 
-    public TimeSpan Retention
-    {
-        get { lock (_lock) return _retention; }
-    }
+    public TimeSpan Interval => Options.Interval;
 
     public bool IsRunning => _thread is not null;
 
-    /// <summary>Wall time spent producing the last published sample (probe + processing + history).</summary>
+    /// <summary>Wall time spent producing the last published sample (system + watched + history, plus the scan if any).</summary>
     public TimeSpan LastSampleDuration { get; private set; }
 
-    /// <summary>Changes interval/retention. History is cleared (its slots are tied to the interval).</summary>
-    public void Configure(TimeSpan interval, TimeSpan retention)
+    /// <summary>Wall time of the last full process scan (probe + rates).</summary>
+    public TimeSpan LastScanDuration { get; private set; }
+
+    /// <summary>Processes currently sampled at the fast rate.</summary>
+    public int WatchedProcessCount { get; private set; }
+
+    /// <summary>Changes rates/retention. History is cleared (its slots are tied to the intervals).</summary>
+    public void Configure(SamplingOptions options)
     {
-        Validate(interval, retention);
+        options.Validate();
         lock (_lock)
         {
-            if (interval == _interval && retention == _retention)
+            if (options == _options)
                 return;
-            _interval = interval;
-            _retention = retention;
+            _options = options;
             _history = CreateHistory();
+            _samplesUntilScan = 0;
         }
         _wake.Set();
+    }
+
+    /// <summary>Name patterns to sample at the fast rate (applied at the next sample, effective from the next scan).</summary>
+    public void SetWatchedPatterns(IEnumerable<string> patterns)
+    {
+        var array = patterns.ToArray();
+        lock (_lock)
+            _pendingPatterns = array;
     }
 
     public void Start()
@@ -92,24 +126,69 @@ public sealed class SamplingEngine : IDisposable
         _thread = null;
     }
 
-    /// <summary>Takes one sample synchronously. The first sample after start only establishes the baseline.</summary>
+    /// <summary>Takes one sample synchronously. The first sample after start only establishes the baselines.</summary>
     /// <returns>true if a sample was published.</returns>
     public bool SampleOnce()
     {
         lock (_sampleLock)
         {
             var start = Stopwatch.GetTimestamp();
-            _probe.Collect(_raw);
-            if (!_processor.Process(_raw, _back))
+            string[]? patterns;
+            lock (_lock)
+            {
+                patterns = _pendingPatterns;
+                _pendingPatterns = null;
+            }
+            if (patterns is not null)
+            {
+                _watched.SetPatterns(patterns);
+                _samplesUntilScan = 0; // Discover the new patterns' processes now.
+            }
+
+            _probe.CollectSystem(_raw);
+
+            // Scan on schedule, and on every sample until the table has rates (startup, reconfiguration).
+            var scanned = false;
+            if (_samplesUntilScan <= 0 || !_tableHasRates)
+            {
+                var scanStart = Stopwatch.GetTimestamp();
+                _probe.CollectProcesses(_raw);
+                scanned = _processor.ProcessScan(_raw, _spareTable);
+                _watched.OnScan(_raw, scanned ? _spareTable : null);
+                _samplesUntilScan = Options.ScanEvery;
+                LastScanDuration = Stopwatch.GetElapsedTime(scanStart);
+            }
+            _samplesUntilScan--;
+
+            _watched.Tick();
+            WatchedProcessCount = _watched.WatchedCount;
+
+            if (!_processor.ProcessSystem(_raw, _back))
                 return false;
 
             lock (_lock)
             {
+                if (scanned)
+                {
+                    // The previous table stays referenced by the front snapshot until the swap below; the one before it
+                    // is unreferenced and becomes the spare for the next scan.
+                    (_currentTable, _spareTable) = (_spareTable, _currentTable);
+                    _tableHasRates = true;
+                }
+                _back.Table = _currentTable;
+                _back.System.IoOps = _currentTable.IoOps;
+                _back.System.IoBytes = _currentTable.IoBytes;
+
                 if (_history.CoreCount != _back.Cores.Length)
-                    _history = new HistoryStore(_history.Capacity, _back.Cores.Length);
+                    _history = new HistoryStore(_history.Capacity, _history.ScanCapacity, _back.Cores.Length);
                 (_front, _back) = (_back, _front);
                 _front.SampleIndex = _history.TotalSamples;
-                _history.Append(_front);
+                _history.AppendSample(_front, _watched.Aggregates);
+                if (scanned)
+                {
+                    _currentTable.ScanIndex = _history.TotalScans;
+                    _history.AppendScan(_currentTable);
+                }
             }
             LastSampleDuration = Stopwatch.GetElapsedTime(start);
         }
@@ -153,21 +232,15 @@ public sealed class SamplingEngine : IDisposable
         }
     }
 
-    private HistoryStore CreateHistory()
-    {
-        var capacity = (int)Math.Ceiling(_retention / _interval);
-        return new HistoryStore(Math.Max(capacity, 2), _probe.LogicalProcessorCount);
-    }
-
-    private static void Validate(TimeSpan interval, TimeSpan retention)
-    {
-        ArgumentOutOfRangeException.ThrowIfLessThan(interval, MinInterval);
-        ArgumentOutOfRangeException.ThrowIfLessThan(retention, interval * 2);
-    }
+    private HistoryStore CreateHistory() => new(
+        Math.Max(2, (int)Math.Ceiling(_options.Retention / _options.Interval)),
+        Math.Max(2, (int)Math.Ceiling(_options.Retention / (_options.Interval * _options.ScanEvery))),
+        _probe.LogicalProcessorCount);
 
     public void Dispose()
     {
         Stop();
+        _watched.Dispose();
         _wake.Dispose();
     }
 }

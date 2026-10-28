@@ -58,9 +58,12 @@ public struct RawMemory
 /// <summary>One probe read. Reused across ticks: arrays only grow.</summary>
 public sealed class RawSample
 {
-    /// <summary>Monotonic time of the read.</summary>
+    /// <summary>Monotonic time of the system read (<see cref="ISystemProbe.CollectSystem"/>).</summary>
     public TimeSpan Elapsed;
     public DateTime WallTimeUtc;
+
+    /// <summary>Monotonic time of the last process scan (<see cref="ISystemProbe.CollectProcesses"/>).</summary>
+    public TimeSpan ProcessesElapsed;
     public RawProcess[] Processes = new RawProcess[512];
     public int ProcessCount;
     public RawCore[] Cores = [];

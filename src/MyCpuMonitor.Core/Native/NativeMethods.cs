@@ -27,6 +27,65 @@ internal static unsafe partial class Kernel32
     [LibraryImport("kernel32.dll", EntryPoint = "K32GetPerformanceInfo")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetPerformanceInfo(PerformanceInformation* performanceInformation, uint cb);
+
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    public const uint SYNCHRONIZE = 0x00100000;
+    public const uint WAIT_OBJECT_0 = 0;
+
+    [LibraryImport("kernel32.dll")]
+    public static partial nint OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool CloseHandle(nint handle);
+
+    [LibraryImport("kernel32.dll")]
+    public static partial uint WaitForSingleObject(nint handle, uint milliseconds);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetProcessTimes(nint process, long* creationTime, long* exitTime, long* kernelTime, long* userTime);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "K32GetProcessMemoryInfo")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetProcessMemoryInfo(nint process, ProcessMemoryCountersEx* counters, uint cb);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetProcessIoCounters(nint process, IoCounters* counters);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetProcessHandleCount(nint process, uint* handleCount);
+}
+
+/// <summary>PROCESS_MEMORY_COUNTERS_EX.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct ProcessMemoryCountersEx
+{
+    public uint cb;
+    public uint PageFaultCount;
+    public nuint PeakWorkingSetSize;
+    public nuint WorkingSetSize;
+    public nuint QuotaPeakPagedPoolUsage;
+    public nuint QuotaPagedPoolUsage;
+    public nuint QuotaPeakNonPagedPoolUsage;
+    public nuint QuotaNonPagedPoolUsage;
+    public nuint PagefileUsage;
+    public nuint PeakPagefileUsage;
+    public nuint PrivateUsage;
+}
+
+/// <summary>IO_COUNTERS.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct IoCounters
+{
+    public ulong ReadOperationCount;
+    public ulong WriteOperationCount;
+    public ulong OtherOperationCount;
+    public ulong ReadTransferCount;
+    public ulong WriteTransferCount;
+    public ulong OtherTransferCount;
 }
 
 [StructLayout(LayoutKind.Sequential)]

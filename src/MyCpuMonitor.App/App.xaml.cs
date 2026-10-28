@@ -22,11 +22,8 @@ public partial class App : Application
     {
         var session = new LayoutSession(new LayoutStore(AppPaths.Layouts), new SettingsStore(AppPaths.Settings));
         var settings = session.Settings;
-        if (settings.SampleInterval < SamplingEngine.MinInterval)
-            settings.SampleIntervalMs = (int)SamplingEngine.MinInterval.TotalMilliseconds;
-
         _probe = new NativeSystemProbe();
-        _engine = new SamplingEngine(_probe, settings.SampleInterval, settings.HistoryRetention);
+        _engine = new SamplingEngine(_probe, settings.SamplingOptions);
         var monitor = new MonitorService(_engine, DispatcherQueue.GetForCurrentThread(), settings.CpuScale);
 
         _window = new MainWindow(session, monitor);

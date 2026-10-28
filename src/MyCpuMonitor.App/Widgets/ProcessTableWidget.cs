@@ -24,6 +24,9 @@ public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
     private readonly ProcessQuery _query = new();
     private readonly TextBlock[] _headers;
     private readonly TextBlock[,] _cells;
+    private long _lastScanIndex = -1;
+    private int _lastDisplayVersion = -1;
+    private bool _queryDirty = true;
 
     public ProcessTableWidget(ProcessTableWidgetConfig config, MonitorService monitor)
     {
@@ -102,8 +105,21 @@ public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
 
     public void Refresh()
     {
+        // The table only changes with a new scan (slower than samples), a sort change or a display setting change.
         var options = new ProcessQueryOptions(_config.SortBy, _config.Descending, _config.TopCount, _config.GroupByName, _config.Filter);
-        _monitor.Engine.Read((_query, options), static (state, snapshot, _) => state._query.Run(snapshot, state.options).Length);
+        var ran = _monitor.Engine.Read((widget: this, options), static (state, snapshot, _) =>
+        {
+            var w = state.widget;
+            if (snapshot.Table.ScanIndex == w._lastScanIndex && !w._queryDirty)
+                return false;
+            w._lastScanIndex = snapshot.Table.ScanIndex;
+            w._query.Run(snapshot, state.options);
+            return true;
+        });
+        if (!ran && _monitor.DisplayVersion == _lastDisplayVersion)
+            return;
+        _queryDirty = false;
+        _lastDisplayVersion = _monitor.DisplayVersion;
 
         // Results are owned by the query: read them outside the engine lock.
         var rows = _query.Results;
@@ -154,6 +170,7 @@ public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
             _config.Descending = field != ProcessField.Name;
         }
         UpdateHeaders();
+        _queryDirty = true;
         Refresh();
         ConfigChanged?.Invoke();
     }

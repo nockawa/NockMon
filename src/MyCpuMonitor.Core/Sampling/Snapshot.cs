@@ -138,7 +138,30 @@ public struct SystemStats
     };
 }
 
-/// <summary>One computed tick. Reused (double-buffered) by the engine: never keep a reference outside a read callback.</summary>
+/// <summary>Result of one full process scan. Produced at the scan rate, double-buffered independently of <see cref="Snapshot"/>.</summary>
+public sealed class ProcessTable
+{
+    /// <summary>History scan index of this table, -1 before the first one.</summary>
+    public long ScanIndex = -1;
+    public DateTime WallTimeUtc;
+
+    /// <summary>Time covered by the rates (previous scan to this one).</summary>
+    public TimeSpan Interval;
+
+    public ProcessStats[] Items = new ProcessStats[512];
+    public int Count;
+
+    /// <summary>Sum of all processes' I/O rates.</summary>
+    public double IoOps;
+    public double IoBytes;
+
+    public ReadOnlySpan<ProcessStats> Span => Items.AsSpan(0, Count);
+}
+
+/// <summary>
+/// One fast tick: system and per-CPU values at the sample interval, plus the latest process table (scan rate).
+/// Reused (double-buffered) by the engine: never keep a reference outside a read callback.
+/// </summary>
 public sealed class Snapshot
 {
     /// <summary>History index of this sample, -1 before the first one.</summary>
@@ -146,10 +169,13 @@ public sealed class Snapshot
     public DateTime WallTimeUtc;
     public TimeSpan Interval;
     public int LogicalProcessors;
-    public ProcessStats[] Processes = new ProcessStats[512];
-    public int ProcessCount;
     public CoreStats[] Cores = [];
     public SystemStats System;
 
-    public ReadOnlySpan<ProcessStats> ProcessSpan => Processes.AsSpan(0, ProcessCount);
+    /// <summary>Latest process scan. Shared between consecutive snapshots until the next scan.</summary>
+    public ProcessTable Table = new();
+
+    public ProcessStats[] Processes => Table.Items;
+    public int ProcessCount => Table.Count;
+    public ReadOnlySpan<ProcessStats> ProcessSpan => Table.Span;
 }

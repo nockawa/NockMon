@@ -37,9 +37,13 @@ public sealed class MonitorService
             if (_cpuScale == value)
                 return;
             _cpuScale = value;
+            DisplayVersion++;
             Updated?.Invoke();
         }
     }
+
+    /// <summary>Incremented when display settings change (widgets caching formatted text must re-format).</summary>
+    public int DisplayVersion { get; private set; }
 
     /// <summary>Raised on the UI thread after a new sample, or when display settings change.</summary>
     public event Action? Updated;

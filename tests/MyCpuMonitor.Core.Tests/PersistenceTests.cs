@@ -108,7 +108,7 @@ public sealed class PersistenceTests : IDisposable
     {
         var path = Path.Combine(_dir, "settings.json");
         var store = new SettingsStore(path);
-        Assert.Equal(1000, store.Load().SampleIntervalMs);
+        Assert.Equal(new AppSettings().SampleIntervalMs, store.Load().SampleIntervalMs);
 
         store.Save(new AppSettings { SampleIntervalMs = 250, CpuScale = CpuScale.Cpus, ActiveLayout = "Work" });
         var back = store.Load();
@@ -117,6 +117,6 @@ public sealed class PersistenceTests : IDisposable
         Assert.DoesNotContain("sampleInterval\"", File.ReadAllText(path));
 
         File.WriteAllText(path, "garbage");
-        Assert.Equal(1000, store.Load().SampleIntervalMs);
+        Assert.Equal(new AppSettings().SampleIntervalMs, store.Load().SampleIntervalMs);
     }
 }

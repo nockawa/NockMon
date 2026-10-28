@@ -115,12 +115,22 @@
                     x:Name="IntervalPicker"
                     MinWidth="100"
                     SelectionChanged="OnIntervalChanged"
-                    ToolTipService.ToolTip="Sampling interval (changing it clears the history)">
-                    <ComboBoxItem Content="250 ms" Tag="250" />
-                    <ComboBoxItem Content="500 ms" Tag="500" />
-                    <ComboBoxItem Content="1 s" Tag="1000" />
-                    <ComboBoxItem Content="2 s" Tag="2000" />
-                    <ComboBoxItem Content="5 s" Tag="5000" />
+                    ToolTipService.ToolTip="Sample interval: system, per-CPU and watched processes (those used by charts and values). Changing it clears the history.">
+                    <ComboBoxItem Content="Sample 250 ms" Tag="250" />
+                    <ComboBoxItem Content="Sample 500 ms" Tag="500" />
+                    <ComboBoxItem Content="Sample 1 s" Tag="1000" />
+                    <ComboBoxItem Content="Sample 2 s" Tag="2000" />
+                    <ComboBoxItem Content="Sample 5 s" Tag="5000" />
+                </ComboBox>
+                <ComboBox
+                    x:Name="ScanPicker"
+                    MinWidth="100"
+                    SelectionChanged="OnScanIntervalChanged"
+                    ToolTipService.ToolTip="Full process scan interval: process tables and history of unwatched processes (~13 ms per scan). Changing it clears the history.">
+                    <ComboBoxItem Content="Scan 1 s" Tag="1000" />
+                    <ComboBoxItem Content="Scan 2 s" Tag="2000" />
+                    <ComboBoxItem Content="Scan 5 s" Tag="5000" />
+                    <ComboBoxItem Content="Scan 10 s" Tag="10000" />
                 </ComboBox>
             </StackPanel>
         </Grid>

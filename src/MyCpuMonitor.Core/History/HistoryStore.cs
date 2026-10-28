@@ -5,9 +5,15 @@ using MyCpuMonitor.Core.Sampling;
 namespace MyCpuMonitor.Core.History;
 
 /// <summary>
-/// Fixed-capacity ring of samples. System and per-core series are preallocated; process series are
-/// aggregated per image name (sum over instances) so they survive restarts and match name patterns.
-/// A name series is evicted once it has had no instance for a full window. Absent = 0 (sum over no instance).
+/// Two-rate history. Fast rings (one slot per sample): timestamps, system and per-CPU series, and watched-pattern
+/// process series. Slow rings (one slot per process scan): process series aggregated per image name (sum over
+/// instances), so they survive restarts, match any pattern and cover processes nobody watched yet.
+/// <para>
+/// Every series reads at the fast rate. A process series is the slow per-name sum upsampled as a step function
+/// (a scan's value holds until the next scan), overlaid with the watched-pattern data where it exists: a chart added
+/// now shows the past at scan resolution and the future at sample resolution.
+/// </para>
+/// A name series is evicted once it has had no instance for a full slow window. Absent = 0 (sum over no instance).
 /// Not thread-safe: the engine serializes access.
 /// </summary>
 public sealed class HistoryStore
@@ -19,40 +25,67 @@ public sealed class HistoryStore
     private readonly DateTime[] _time;
     private readonly float[][] _system;
     private readonly float[][] _cores;
+    private readonly long[] _scanSampleIndex;
     private readonly Dictionary<string, NameSeries> _names = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, WatchedSeries> _watched = new(StringComparer.Ordinal);
     private readonly Dictionary<string, NamePattern> _patterns = new();
+    private readonly HashSet<string> _seenPatterns = new(StringComparer.Ordinal);
+    private float[] _scanScratch = [];
+    private float[] _scratch = [];
 
     private sealed class NameSeries(string name, int capacity)
     {
         public readonly string Name = name;
         public readonly float[][] Values = CreateBuffers(ProcessFieldCount, capacity);
-        public long LastActive;
+        public long LastActiveScan;
     }
 
-    public HistoryStore(int capacity, int coreCount)
+    private sealed class WatchedSeries(int capacity)
+    {
+        public readonly float[][] Values = CreateBuffers(ProcessFieldCount, capacity);
+
+        /// <summary>Sample index of the first value (older slots hold nothing).</summary>
+        public long FirstSample;
+    }
+
+    public HistoryStore(int capacity, int scanCapacity, int coreCount)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 2);
+        ArgumentOutOfRangeException.ThrowIfLessThan(scanCapacity, 2);
         ArgumentOutOfRangeException.ThrowIfNegative(coreCount);
         Capacity = capacity;
+        ScanCapacity = scanCapacity;
         CoreCount = coreCount;
         _time = new DateTime[capacity];
         _system = CreateBuffers(SystemMetricCount, capacity);
         _cores = CreateBuffers(CoreMetricCount * coreCount, capacity);
+        _scanSampleIndex = new long[scanCapacity];
     }
 
+    /// <summary>Fast ring size (samples).</summary>
     public int Capacity { get; }
+
+    /// <summary>Slow ring size (scans).</summary>
+    public int ScanCapacity { get; }
+
     public int CoreCount { get; }
 
     /// <summary>Total samples ever appended (index of the next sample).</summary>
     public long TotalSamples { get; private set; }
 
+    /// <summary>Total scans ever appended.</summary>
+    public long TotalScans { get; private set; }
+
     /// <summary>Samples currently available.</summary>
     public int Count => (int)Math.Min(TotalSamples, Capacity);
+
+    private int ScanCount => (int)Math.Min(TotalScans, ScanCapacity);
 
     /// <summary>Image names currently held in history.</summary>
     public IEnumerable<string> ProcessNames => _names.Keys;
 
-    public void Append(Snapshot snapshot)
+    /// <summary>Appends a fast sample: system, cores, and the watched-pattern aggregates of this tick.</summary>
+    public void AppendSample(Snapshot snapshot, IReadOnlyList<WatchedAggregate> watched)
     {
         if (snapshot.Cores.Length != CoreCount)
             throw new ArgumentException($"Snapshot has {snapshot.Cores.Length} cores, history expects {CoreCount}.", nameof(snapshot));
@@ -69,29 +102,56 @@ public sealed class HistoryStore
                 _cores[m * CoreCount + c][slot] = (float)snapshot.Cores[c].GetValue((CoreMetric)m);
         }
 
+        _seenPatterns.Clear();
+        foreach (var aggregate in watched)
+        {
+            if (!_watched.TryGetValue(aggregate.Pattern, out var series))
+                _watched[aggregate.Pattern] = series = new WatchedSeries(Capacity) { FirstSample = TotalSamples };
+            for (var f = 0; f < ProcessFieldCount; f++)
+                series.Values[f][slot] = aggregate.Values[f];
+            _seenPatterns.Add(aggregate.Pattern);
+        }
+        foreach (var pattern in _watched.Keys)
+        {
+            if (!_seenPatterns.Contains(pattern))
+                _watched.Remove(pattern); // No longer watched: its fast data would go stale.
+        }
+
+        TotalSamples++;
+    }
+
+    /// <summary>Appends a process scan, attached to the last appended sample.</summary>
+    public void AppendScan(ProcessTable table)
+    {
+        if (TotalSamples == 0)
+            throw new InvalidOperationException("A scan is attached to a sample: append a sample first.");
+
+        var slot = (int)(TotalScans % ScanCapacity);
+        _scanSampleIndex[slot] = TotalSamples - 1;
+
         foreach (var series in _names.Values)
         {
             foreach (var buffer in series.Values)
                 buffer[slot] = 0;
         }
 
-        foreach (ref readonly var p in snapshot.ProcessSpan)
+        foreach (ref readonly var p in table.Span)
         {
             if (!_names.TryGetValue(p.Name, out var series))
             {
-                series = new NameSeries(p.Name, Capacity);
+                series = new NameSeries(p.Name, ScanCapacity);
                 _names.Add(p.Name, series);
             }
-            series.LastActive = TotalSamples;
+            series.LastActiveScan = TotalScans;
             for (var f = 0; f < ProcessFieldCount; f++)
                 series.Values[f][slot] += (float)p.GetValue(MetricCatalog.ProcessHistoryFields[f]);
         }
 
-        TotalSamples++;
+        TotalScans++;
 
         foreach (var (name, series) in _names)
         {
-            if (TotalSamples - series.LastActive > Capacity)
+            if (TotalScans - series.LastActiveScan > ScanCapacity)
                 _names.Remove(name);
         }
     }
@@ -105,12 +165,12 @@ public sealed class HistoryStore
         switch (series)
         {
             case SystemSeries s:
-                CopyLatest(_system[(int)s.Metric], dst);
+                CopyLatest(_system[(int)s.Metric], TotalSamples, Capacity, dst);
                 break;
             case CoreSeries s:
                 if ((uint)s.Core >= (uint)CoreCount)
-                    throw new ArgumentOutOfRangeException(nameof(series), $"Core {s.Core} does not exist ({CoreCount} cores).");
-                CopyLatest(_cores[(int)s.Metric * CoreCount + s.Core], dst);
+                    throw new ArgumentOutOfRangeException(nameof(series), $"CPU {s.Core} does not exist ({CoreCount} CPUs).");
+                CopyLatest(_cores[(int)s.Metric * CoreCount + s.Core], TotalSamples, Capacity, dst);
                 break;
             case ProcessSeries s:
                 ReadProcess(s, dst);
@@ -125,9 +185,12 @@ public sealed class HistoryStore
     public int ReadTimestamps(Span<DateTime> destination)
     {
         var n = Math.Min(destination.Length, Count);
-        CopyLatest(_time, destination[..n]);
+        CopyLatest(_time, TotalSamples, Capacity, destination[..n]);
         return n;
     }
+
+    /// <summary>True if <paramref name="pattern"/> currently has fast-rate data.</summary>
+    public bool IsWatched(string pattern) => _watched.ContainsKey(pattern);
 
     private void ReadProcess(ProcessSeries series, Span<float> destination)
     {
@@ -135,28 +198,64 @@ public sealed class HistoryStore
         if (field < 0)
             throw new ArgumentException($"Process field {series.Field} has no history.", nameof(series));
 
-        if (!_patterns.TryGetValue(series.Pattern, out var pattern))
-            _patterns[series.Pattern] = pattern = new NamePattern(series.Pattern);
+        var n = destination.Length;
+        var firstSample = TotalSamples - n;
+        UpsampleScans(series.Pattern, field, firstSample, destination);
 
+        if (_watched.TryGetValue(series.Pattern, out var watched))
+        {
+            var from = (int)Math.Max(0, watched.FirstSample - firstSample);
+            if (from < n)
+                CopyLatest(watched.Values[field], TotalSamples, Capacity, destination[from..]);
+        }
+    }
+
+    /// <summary>Sums matching name series per scan, then holds each scan's value until the next one.</summary>
+    private void UpsampleScans(string patternText, int field, long firstSample, Span<float> destination)
+    {
         destination.Clear();
-        Span<float> scratch = destination.Length <= 4096 ? stackalloc float[destination.Length] : new float[destination.Length];
+        var scans = ScanCount;
+        if (scans == 0)
+            return;
+
+        if (!_patterns.TryGetValue(patternText, out var pattern))
+            _patterns[patternText] = pattern = new NamePattern(patternText);
+
+        if (_scanScratch.Length < scans)
+        {
+            _scanScratch = new float[ScanCapacity];
+            _scratch = new float[ScanCapacity];
+        }
+        var sums = _scanScratch.AsSpan(0, scans);
+        var one = _scratch.AsSpan(0, scans);
+        sums.Clear();
         foreach (var named in _names.Values)
         {
             if (!pattern.IsMatch(named.Name))
                 continue;
-            CopyLatest(named.Values[field], scratch);
-            for (var i = 0; i < destination.Length; i++)
-                destination[i] += scratch[i];
+            CopyLatest(named.Values[field], TotalScans, ScanCapacity, one);
+            for (var i = 0; i < scans; i++)
+                sums[i] += one[i];
+        }
+
+        var firstScanSlot = TotalScans - scans;
+        var k = -1; // Index (in sums) of the last scan taken at or before the current sample.
+        for (var i = 0; i < destination.Length; i++)
+        {
+            var sample = firstSample + i;
+            while (k + 1 < scans && _scanSampleIndex[(int)((firstScanSlot + k + 1) % ScanCapacity)] <= sample)
+                k++;
+            destination[i] = k >= 0 ? sums[k] : 0;
         }
     }
 
-    private void CopyLatest<T>(T[] ring, Span<T> destination)
+    private static void CopyLatest<T>(T[] ring, long total, int capacity, Span<T> destination)
     {
         var n = destination.Length;
         if (n == 0)
             return;
-        var start = (int)((TotalSamples - n) % Capacity);
-        var first = Math.Min(n, Capacity - start);
+        var start = (int)((total - n) % capacity);
+        var first = Math.Min(n, capacity - start);
         ring.AsSpan(start, first).CopyTo(destination);
         ring.AsSpan(0, n - first).CopyTo(destination[first..]);
     }

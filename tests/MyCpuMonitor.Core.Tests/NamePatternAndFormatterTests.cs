@@ -11,6 +11,8 @@ public class NamePatternTests
     [InlineData("DEVENV.EXE", "devenv.exe", true)]
     [InlineData("devenv", "devenv.exe", true)]
     [InlineData("devenv", "devenv.com", false)]
+    [InlineData("MyApp.Core", "MyApp.Core.exe", true)]
+    [InlineData("MyApp.Core", "MyApp.Core.dll", false)]
     [InlineData("dev", "devenv.exe", false)]
     [InlineData("chrome*", "chrome.exe", true)]
     [InlineData("*host*", "svchost.exe", true)]

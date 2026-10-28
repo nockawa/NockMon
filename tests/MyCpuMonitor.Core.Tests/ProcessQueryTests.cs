@@ -9,7 +9,7 @@ public class ProcessQueryTests
 {
     private static Snapshot Snap(params (int Pid, string Name, double Cpu, long Private)[] processes)
     {
-        var s = new Snapshot { ProcessCount = processes.Length };
+        var s = new Snapshot { Table = new ProcessTable { Count = processes.Length } };
         for (var i = 0; i < processes.Length; i++)
         {
             var (pid, name, cpu, priv) = processes[i];

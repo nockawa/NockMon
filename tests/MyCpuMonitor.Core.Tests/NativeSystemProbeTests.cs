@@ -27,8 +27,10 @@ public class NativeSystemProbeTests
     {
         using var probe = new NativeSystemProbe();
         var sample = new RawSample();
-        probe.Collect(sample);
+        probe.CollectSystem(sample);
+        probe.CollectProcesses(sample);
 
+        Assert.True(sample.ProcessesElapsed >= sample.Elapsed);
         Assert.Equal(Environment.ProcessorCount, probe.LogicalProcessorCount);
         Assert.Equal(probe.LogicalProcessorCount, sample.Cores.Length);
         Assert.True(sample.ProcessCount > 10);
@@ -55,11 +57,15 @@ public class NativeSystemProbeTests
     {
         using var probe = new NativeSystemProbe();
         var sample = new RawSample();
-        probe.Collect(sample);
-        probe.Collect(sample);
+        for (var i = 0; i < 2; i++)
+        {
+            probe.CollectSystem(sample);
+            probe.CollectProcesses(sample);
+        }
 
         var before = GC.GetAllocatedBytesForCurrentThread();
-        probe.Collect(sample);
+        probe.CollectSystem(sample);
+        probe.CollectProcesses(sample);
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
         // Only names of processes started between the two calls may allocate.
@@ -67,10 +73,39 @@ public class NativeSystemProbeTests
     }
 
     [Fact]
-    public void Engine_MeasuresBusyThreadCpu()
+    public void ProcessHandle_ReadsOwnCounters_AndRejectsWrongIdentity()
     {
         using var probe = new NativeSystemProbe();
-        using var engine = new SamplingEngine(probe, TimeSpan.FromMilliseconds(100), TimeSpan.FromMinutes(1));
+        var sample = new RawSample();
+        probe.CollectProcesses(sample);
+        var self = sample.Processes.AsSpan(0, sample.ProcessCount).ToArray().Single(p => p.Pid == Environment.ProcessId);
+
+        Assert.False(probe.TryOpenProcess(new Model.ProcessKey(self.Pid, self.CreateTime + 1), out _));
+        Assert.True(probe.TryOpenProcess(new Model.ProcessKey(self.Pid, self.CreateTime), out var handle));
+        try
+        {
+            var counters = new RawProcess { Threads = 42 };
+            Assert.True(probe.TryReadProcess(handle, ref counters));
+            Assert.True(counters.UserTime + counters.KernelTime >= self.UserTime + self.KernelTime);
+            Assert.True(counters.WorkingSet > 1 << 20);
+            Assert.True(counters.PrivateBytes > 1 << 20);
+            Assert.True(counters.Handles > 10);
+            Assert.Equal(42, counters.Threads); // Not available through a handle: left untouched.
+        }
+        finally
+        {
+            probe.CloseProcess(handle);
+        }
+    }
+
+    [Fact]
+    public void Engine_MeasuresBusyThreadCpu_InScanAndWatched()
+    {
+        using var probe = new NativeSystemProbe();
+        var options = new SamplingOptions(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(100), TimeSpan.FromMinutes(1));
+        using var engine = new SamplingEngine(probe, options);
+        engine.SetWatchedPatterns([Process.GetCurrentProcess().ProcessName]);
+        engine.SampleOnce();
         engine.SampleOnce();
 
         var sw = Stopwatch.StartNew();
@@ -78,19 +113,22 @@ public class NativeSystemProbeTests
             Thread.SpinWait(1000);
         Assert.True(engine.SampleOnce());
 
-        var (cpu, system, logical) = engine.Read(Environment.ProcessId, static (pid, s, _) =>
+        var (cpu, watchedCpu, system, logical) = engine.Read(Environment.ProcessId, static (pid, s, h) =>
         {
+            var buffer = new float[1];
+            h.Read(new ProcessSeries(ProcessField.Cpu, Process.GetCurrentProcess().ProcessName), buffer);
             foreach (ref readonly var p in s.ProcessSpan)
             {
                 if (p.Pid == pid)
-                    return (p.Cpu, s.System.Cpu, s.LogicalProcessors);
+                    return (p.Cpu, buffer[0], s.System.Cpu, s.LogicalProcessors);
             }
-            return (-1, 0, 0);
+            return (-1, 0, 0, 0);
         });
 
-        // One spinning thread ≈ 1 core (scheduler noise tolerated).
+        // One spinning thread ≈ 1 CPU (scheduler noise and 15.6 ms CPU-time granularity tolerated).
+        Assert.Equal(1, engine.WatchedProcessCount);
         Assert.InRange(cpu, 0.7, 1.5);
+        Assert.InRange(watchedCpu, 0.7, 1.5);
         Assert.InRange(system, 0.7, logical);
-        Assert.InRange(MetricFormatter.CpuPercent(cpu, logical), 70.0 / logical, 150.0 / logical);
     }
 }

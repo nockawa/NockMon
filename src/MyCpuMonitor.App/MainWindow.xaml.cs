@@ -28,8 +28,8 @@ public sealed partial class MainWindow : Window
         _monitor.Updated += OnMonitorUpdated;
 
         CpuScalePicker.SelectedIndex = (int)session.Settings.CpuScale;
-        IntervalPicker.SelectedItem = IntervalPicker.Items.Cast<ComboBoxItem>()
-            .FirstOrDefault(i => int.Parse((string)i.Tag, CultureInfo.InvariantCulture) == session.Settings.SampleIntervalMs);
+        SelectByTag(IntervalPicker, session.Settings.SampleIntervalMs);
+        SelectByTag(ScanPicker, session.Settings.ScanIntervalMs);
 
         var scale = RootGrid.XamlRoot?.RasterizationScale ?? Win32.GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
         AppWindow.Resize(new SizeInt32((int)(1400 * scale), (int)(860 * scale)));
@@ -49,7 +49,15 @@ public sealed partial class MainWindow : Window
     {
         Board.Layout = _session.Current;
         RefreshPicker();
+        UpdateWatchedPatterns();
     }
+
+    /// <summary>Processes used by charts and value widgets are sampled at the fast rate.</summary>
+    private void UpdateWatchedPatterns() => _monitor.Engine.SetWatchedPatterns(LayoutPatterns.Watched(_session.Current));
+
+    private static void SelectByTag(ComboBox picker, int value) =>
+        picker.SelectedItem = picker.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(i => int.Parse((string)i.Tag, CultureInfo.InvariantCulture) == value);
 
     private void RefreshPicker()
     {
@@ -79,9 +87,12 @@ public sealed partial class MainWindow : Window
     {
         Board.RefreshWidgets();
         var engine = _monitor.Engine;
-        var (processes, interval) = engine.Read(0, static (_, s, _) => (s.ProcessCount, s.Interval));
+        var options = engine.Options;
+        var processes = engine.Read(0, static (_, s, _) => s.ProcessCount);
         StatusText.Text = string.Create(CultureInfo.CurrentCulture,
-            $"{processes} processes · {_monitor.LogicalProcessors} CPUs · sample {engine.LastSampleDuration.TotalMilliseconds:0.0} ms / {interval.TotalMilliseconds:0} ms");
+            $"{processes} processes · {engine.WatchedProcessCount} watched · {_monitor.LogicalProcessors} CPUs · " +
+            $"sample {engine.LastSampleDuration.TotalMilliseconds:0.0} ms / {options.Interval.TotalMilliseconds:0} ms · " +
+            $"scan {engine.LastScanDuration.TotalMilliseconds:0.0} ms / {(options.Interval * options.ScanEvery).TotalSeconds:0.#} s");
     }
 
     private void OnCpuScaleChanged(object sender, SelectionChangedEventArgs e)
@@ -99,14 +110,25 @@ public sealed partial class MainWindow : Window
 
     private void OnIntervalChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (IntervalPicker.SelectedItem is not ComboBoxItem { Tag: string tag })
+        if (IntervalPicker.SelectedItem is ComboBoxItem { Tag: string tag })
+            ApplySampling(sampleMs: int.Parse(tag, CultureInfo.InvariantCulture), scanMs: null);
+    }
+
+    private void OnScanIntervalChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ScanPicker.SelectedItem is ComboBoxItem { Tag: string tag })
+            ApplySampling(sampleMs: null, scanMs: int.Parse(tag, CultureInfo.InvariantCulture));
+    }
+
+    private void ApplySampling(int? sampleMs, int? scanMs)
+    {
+        var settings = _session.Settings;
+        if ((sampleMs ?? settings.SampleIntervalMs) == settings.SampleIntervalMs && (scanMs ?? settings.ScanIntervalMs) == settings.ScanIntervalMs)
             return;
-        var ms = int.Parse(tag, CultureInfo.InvariantCulture);
-        if (_session.Settings.SampleIntervalMs == ms)
-            return;
-        _session.Settings.SampleIntervalMs = ms;
+        settings.SampleIntervalMs = sampleMs ?? settings.SampleIntervalMs;
+        settings.ScanIntervalMs = scanMs ?? settings.ScanIntervalMs;
         _session.SaveSettings();
-        _monitor.Engine.Configure(_session.Settings.SampleInterval, _session.Settings.HistoryRetention);
+        _monitor.Engine.Configure(settings.SamplingOptions);
     }
 
     private void OnWidgetConfigChanged(object? sender, EventArgs e) => Run(_session.SaveCurrent);
@@ -117,7 +139,7 @@ public sealed partial class MainWindow : Window
             static (cores, _, history) => new EditorContext(history.ProcessNames.ToList(), cores));
         var edited = await WidgetEditor.EditAsync(Content.XamlRoot, config, context);
         if (edited is not null)
-            Board.ReplaceWidget(config, edited);
+            Board.ReplaceWidget(config, edited); // Raises LayoutEdited, which updates the watched patterns.
     }
 
     // --- Edit session -----------------------------------------------------------------------------
@@ -145,7 +167,11 @@ public sealed partial class MainWindow : Window
             Info.IsOpen = false;
     }
 
-    private void OnBoardLayoutEdited(object? sender, EventArgs e) => Info.IsOpen = false;
+    private void OnBoardLayoutEdited(object? sender, EventArgs e)
+    {
+        Info.IsOpen = false;
+        UpdateWatchedPatterns();
+    }
 
     private void AddWidget(WidgetKind kind)
     {
@@ -161,6 +187,7 @@ public sealed partial class MainWindow : Window
         }
         _session.Current.Widgets.Add(WidgetCatalog.Create(kind, spot.Value));
         Board.Rebuild();
+        UpdateWatchedPatterns();
     }
 
     // --- Layout management ------------------------------------------------------------------------
