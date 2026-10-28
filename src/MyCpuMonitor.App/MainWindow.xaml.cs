@@ -55,6 +55,7 @@ public sealed partial class MainWindow : Window
         _tray.Activated += ShowFromTray;
         _tray.MenuRequested += OnTrayMenu;
         Closed += (_, _) => _tray.Dispose();
+        SingleInstance.Listen(_hwnd, ShowFromTray);
         SetAlwaysOnTop(session.Settings.AlwaysOnTop);
 
         foreach (var kind in WidgetCatalog.Kinds)
