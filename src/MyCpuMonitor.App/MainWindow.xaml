@@ -9,14 +9,17 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid x:Name="RootGrid">
+    <Grid x:Name="RootGrid" KeyDown="OnRootKeyDown">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Padding="8,6" ColumnSpacing="8">
+        <Grid
+            x:Name="Toolbar"
+            Padding="8,6"
+            ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -103,6 +106,12 @@
                     VerticalAlignment="Center"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     Style="{StaticResource CaptionTextBlockStyle}" />
+                <ToggleButton
+                    x:Name="TopmostButton"
+                    Click="OnTopmostClick"
+                    ToolTipService.ToolTip="Always on top">
+                    <FontIcon FontSize="14" Glyph="&#xE718;" />
+                </ToggleButton>
                 <ComboBox
                     x:Name="CpuScalePicker"
                     MinWidth="170"
@@ -144,7 +153,12 @@
         <board:BoardView
             x:Name="Board"
             Grid.Row="2"
+            DoubleTapped="OnBoardDoubleTapped"
             LayoutEdited="OnBoardLayoutEdited"
+            PointerCaptureLost="OnBoardPointerReleased"
+            PointerMoved="OnBoardPointerMoved"
+            PointerPressed="OnBoardPointerPressed"
+            PointerReleased="OnBoardPointerReleased"
             WidgetConfigChanged="OnWidgetConfigChanged" />
     </Grid>
 </Window>

@@ -30,6 +30,9 @@ public sealed class AppSettings
     public int HistoryMinutes { get; set; } = 60;
     public CpuScale CpuScale { get; set; } = CpuScale.Machine;
     public bool AlwaysOnTop { get; set; }
+
+    /// <summary>The window's close button hides it to the notification area; Exit is in the tray menu.</summary>
+    public bool CloseToTray { get; set; } = true;
     public string ActiveLayout { get; set; } = "Default";
 
     /// <summary>Main window placement at last close; null = default size.</summary>

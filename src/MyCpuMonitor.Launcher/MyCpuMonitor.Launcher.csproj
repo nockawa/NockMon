@@ -17,7 +17,7 @@
     <ToolPackageRuntimeIdentifiers>win-x64;win-arm64</ToolPackageRuntimeIdentifiers>
     <RuntimeIdentifiers>$(ToolPackageRuntimeIdentifiers)</RuntimeIdentifiers>
     <PackageId>MyCpuMonitor</PackageId>
-    <Version>0.4.3</Version>
+    <Version>0.5.2</Version>
     <Authors>Loïc Baumann</Authors>
     <Description>My CPU Monitor - configurable tile-based workstation monitor (Windows only).</Description>
   </PropertyGroup>

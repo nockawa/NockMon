@@ -13,9 +13,17 @@ namespace MyCpuMonitor;
 
 public sealed partial class MainWindow : Window
 {
+    private const uint MenuShow = 1, MenuTopmost = 2, MenuCloseToTray = 3, MenuCompact = 4, MenuExit = 5;
+
     private readonly LayoutSession _session;
     private readonly MonitorService _monitor;
+    private readonly nint _hwnd;
+    private readonly TrayIcon _tray;
+    private readonly float[] _trayHistory = new float[64];
     private bool _updatingPicker;
+    private bool _exiting;
+    private bool _compact;
+    private (PointInt32 Cursor, PointInt32 Window)? _compactDrag;
 
     public MainWindow(LayoutSession session, MonitorService monitor)
     {
@@ -31,17 +39,23 @@ public sealed partial class MainWindow : Window
         SelectByTag(IntervalPicker, session.Settings.SampleIntervalMs);
         SelectByTag(ScanPicker, session.Settings.ScanIntervalMs);
 
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        if (!WindowPlacement.TryRestore(hwnd, session.Settings.Window))
+        _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (!WindowPlacement.TryRestore(_hwnd, session.Settings.Window))
         {
-            var scale = Win32.GetDpiForWindow(hwnd) / 96.0;
+            var scale = Win32.GetDpiForWindow(_hwnd) / 96.0;
             AppWindow.Resize(new SizeInt32((int)(1400 * scale), (int)(860 * scale)));
         }
-        AppWindow.Closing += (_, _) =>
-        {
-            session.Settings.Window = WindowPlacement.Capture(hwnd) ?? session.Settings.Window;
-            session.SaveSettings();
-        };
+        AppWindow.Closing += OnClosing;
+
+        // Static bar icon for the window/taskbar; the tray icon is live.
+        var size = BarIcon.SmallIconSize(_hwnd);
+        var windowIcon = BarIcon.Create(size, [0.3f, 0.5f, 0.4f, 0.7f, 0.6f, 0.9f, 0.5f, 0.8f, 0.6f, 0.4f, 0.7f, 1f, 0.8f, 0.6f]);
+        AppWindow.SetIcon(Microsoft.UI.Win32Interop.GetIconIdFromIcon(windowIcon));
+        _tray = new TrayIcon(_hwnd, BarIcon.Create(size, []), "My CPU Monitor");
+        _tray.Activated += ShowFromTray;
+        _tray.MenuRequested += OnTrayMenu;
+        Closed += (_, _) => _tray.Dispose();
+        SetAlwaysOnTop(session.Settings.AlwaysOnTop);
 
         foreach (var kind in WidgetCatalog.Kinds)
         {
@@ -52,7 +66,43 @@ public sealed partial class MainWindow : Window
 
         _session.CurrentChanged += OnCurrentLayoutChanged;
         OnCurrentLayoutChanged();
+#if DEBUG
+        if (Environment.GetEnvironmentVariable("MYCPUMON_DEBUG_COMPACT") == "1")
+            DebugCompactRoundTrip();
+#endif
     }
+
+#if DEBUG
+    /// <summary>Development: compact on at 4 s, off at 8 s, geometry logged to compact-debug.log in the data folder.</summary>
+    private async void DebugCompactRoundTrip()
+    {
+        var log = Path.Combine(Core.Persistence.AppPaths.Root, "compact-debug.log");
+        void Dump(string phase)
+        {
+            Win32.GetWindowRect(_hwnd, out var w);
+            Win32.GetClientRect(_hwnd, out var c);
+            var origin = RootGrid.TransformToVisual(null).TransformPoint(default);
+            var toolbar = Toolbar.TransformToVisual(null).TransformPoint(default);
+            File.AppendAllText(log,
+                $"{phase}: window={w.Left},{w.Top},{w.Right},{w.Bottom} client={c.Right}x{c.Bottom} " +
+                $"appClient={AppWindow.ClientSize.Width}x{AppWindow.ClientSize.Height} scale={RootGrid.XamlRoot.RasterizationScale} " +
+                $"xamlRoot={RootGrid.XamlRoot.Size.Width:0}x{RootGrid.XamlRoot.Size.Height:0} root={RootGrid.ActualWidth:0}x{RootGrid.ActualHeight:0}@{origin.X:0},{origin.Y:0} " +
+                $"toolbar@{toolbar.X:0},{toolbar.Y:0} style=0x{Win32.GetWindowStyle(_hwnd):X8} " +
+                $"extends={AppWindow.TitleBar.ExtendsContentIntoTitleBar} windowExtends={ExtendsContentIntoTitleBar} " +
+                $"hasTitleBar={(AppWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter)?.HasTitleBar}\n");
+        }
+        await Task.Delay(3000);
+        Dump("normal");
+        await Task.Delay(1000);
+        SetCompact(true);
+        await Task.Delay(2000);
+        Dump("compact");
+        await Task.Delay(2000);
+        SetCompact(false);
+        await Task.Delay(2000);
+        Dump("restored");
+    }
+#endif
 
     private void OnCurrentLayoutChanged()
     {
@@ -94,6 +144,10 @@ public sealed partial class MainWindow : Window
 
     private void OnMonitorUpdated()
     {
+        UpdateTray();
+        if (!AppWindow.IsVisible)
+            return; // Hidden to the tray: only the tray icon is fed.
+
         Board.RefreshWidgets();
         var engine = _monitor.Engine;
         var options = engine.Options;
@@ -102,6 +156,155 @@ public sealed partial class MainWindow : Window
             $"{processes} processes · {engine.WatchedProcessCount} watched · {_monitor.LogicalProcessors} CPUs · " +
             $"sample {engine.LastSampleDuration.TotalMilliseconds:0.0} ms / {options.Interval.TotalMilliseconds:0} ms · " +
             $"scan {engine.LastScanDuration.TotalMilliseconds:0.0} ms / {(options.Interval * options.ScanEvery).TotalSeconds:0.#} s");
+    }
+
+    // --- Tray, visibility, always on top, compact mode --------------------------------------------
+
+    private void UpdateTray()
+    {
+        var size = BarIcon.SmallIconSize(_hwnd);
+        var (count, cpu, used, total) = _monitor.Engine.Read((buffer: _trayHistory, size: size - 2), static (state, s, h) =>
+        {
+            var n = h.Read(new SystemSeries(SystemMetric.Cpu), state.buffer.AsSpan(0, Math.Min(state.size, state.buffer.Length)));
+            return (n, s.System.Cpu, s.System.PhysicalUsed, s.System.PhysicalTotal);
+        });
+        var logical = Math.Max(1, _monitor.LogicalProcessors);
+        var history = _trayHistory.AsSpan(0, count);
+        for (var i = 0; i < history.Length; i++)
+            history[i] /= logical;
+
+        var tip = string.Create(CultureInfo.CurrentCulture,
+            $"My CPU Monitor\nCPU {_monitor.Format(cpu, MetricUnit.Cpu)}\nRAM {MetricFormatter.FormatBytes(used)} / {MetricFormatter.FormatBytes(total)}");
+        _tray.Update(BarIcon.Create(size, history), tip);
+    }
+
+    private void OnClosing(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
+    {
+        _session.Settings.Window = WindowPlacement.Capture(_hwnd) ?? _session.Settings.Window;
+        _session.SaveSettings();
+        if (_exiting || !_session.Settings.CloseToTray)
+            return;
+        args.Cancel = true;
+        AppWindow.Hide();
+    }
+
+    private void ShowFromTray()
+    {
+        AppWindow.Show();
+        Activate();
+        Win32.SetForegroundWindow(_hwnd);
+        OnMonitorUpdated(); // Widgets were not refreshed while hidden.
+    }
+
+    private void Exit()
+    {
+        _exiting = true;
+        Close();
+    }
+
+    private void OnTrayMenu(int x, int y)
+    {
+        var settings = _session.Settings;
+        var choice = _tray.ShowMenu(x, y,
+        [
+            new(MenuShow, "Show"),
+            new(0, "", Separator: true),
+            new(MenuTopmost, "Always on top", settings.AlwaysOnTop),
+            new(MenuCompact, "Compact mode", _compact),
+            new(MenuCloseToTray, "Close button hides to tray", settings.CloseToTray),
+            new(0, "", Separator: true),
+            new(MenuExit, "Exit"),
+        ]);
+        switch (choice)
+        {
+            case MenuShow:
+                ShowFromTray();
+                break;
+            case MenuTopmost:
+                SetAlwaysOnTop(!settings.AlwaysOnTop);
+                break;
+            case MenuCompact:
+                SetCompact(!_compact);
+                ShowFromTray();
+                break;
+            case MenuCloseToTray:
+                settings.CloseToTray = !settings.CloseToTray;
+                _session.SaveSettings();
+                break;
+            case MenuExit:
+                Exit();
+                break;
+        }
+    }
+
+    private void OnTopmostClick(object sender, RoutedEventArgs e) => SetAlwaysOnTop(TopmostButton.IsChecked == true);
+
+    private void SetAlwaysOnTop(bool value)
+    {
+        if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+            presenter.IsAlwaysOnTop = value;
+        TopmostButton.IsChecked = value;
+        if (_session.Settings.AlwaysOnTop == value)
+            return;
+        _session.Settings.AlwaysOnTop = value;
+        _session.SaveSettings();
+    }
+
+    /// <summary>Compact: no toolbar, no title bar (border kept for resizing), the board drags the window.</summary>
+    private void SetCompact(bool compact)
+    {
+        if (_session.IsEditing)
+            return;
+        _compact = compact;
+        Toolbar.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        Info.IsOpen = false;
+        if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+            presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: !compact);
+        // WinUI: hiding the title bar sets AppWindow.TitleBar.ExtendsContentIntoTitleBar, and showing it again does not
+        // reset it, leaving the content under the restored title bar. Reset it explicitly.
+        if (!compact)
+            AppWindow.TitleBar.ExtendsContentIntoTitleBar = false;
+    }
+
+    private void OnBoardDoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (!_session.IsEditing)
+            SetCompact(!_compact);
+    }
+
+    private void OnRootKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Escape && _compact)
+            SetCompact(false);
+    }
+
+    // Manual window drag in compact mode (the system move loop would swallow double-clicks and maximize on them).
+    private void OnBoardPointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_compact || _session.IsEditing || !e.GetCurrentPoint(Board).Properties.IsLeftButtonPressed)
+            return;
+        if (Win32.GetCursorPos(out var cursor))
+            _compactDrag = (new PointInt32(cursor.X, cursor.Y), AppWindow.Position);
+    }
+
+    private void OnBoardPointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_compactDrag is not { } drag || !Win32.GetCursorPos(out var cursor))
+            return;
+        int dx = cursor.X - drag.Cursor.X, dy = cursor.Y - drag.Cursor.Y;
+        if (Math.Abs(dx) + Math.Abs(dy) < 4 && AppWindow.Position == drag.Window)
+            return; // Below the drag threshold: still a click.
+        if (Board.PointerCaptures is not { Count: > 0 })
+            Board.CapturePointer(e.Pointer);
+        AppWindow.Move(new PointInt32(drag.Window.X + dx, drag.Window.Y + dy));
+    }
+
+    private void OnBoardPointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_compactDrag is null)
+            return;
+        _compactDrag = null;
+        Board.ReleasePointerCaptures();
     }
 
     private void OnCpuScaleChanged(object sender, SelectionChangedEventArgs e)
