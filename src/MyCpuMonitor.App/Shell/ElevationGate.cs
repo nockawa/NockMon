@@ -28,6 +28,11 @@ internal static partial class ElevationGate
     {
         if (IsElevated)
             return true;
+#if DEBUG
+        // Development only: UI work without a UAC prompt per launch (elevation-dependent features degrade).
+        if (Environment.GetEnvironmentVariable("MYCPUMON_SKIP_ELEVATION") == "1")
+            return true;
+#endif
 
         var answer = MessageBoxW(0,
             "My CPU Monitor needs administrator rights (kernel tracing, full process access).\n\nRelaunch elevated?",

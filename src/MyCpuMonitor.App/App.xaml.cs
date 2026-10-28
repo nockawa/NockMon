@@ -1,4 +1,6 @@
 using Microsoft.UI.Xaml;
+using MyCpuMonitor.Core.Layout;
+using MyCpuMonitor.Core.Persistence;
 
 namespace MyCpuMonitor;
 
@@ -13,7 +15,8 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new MainWindow();
+        var session = new LayoutSession(new LayoutStore(AppPaths.Layouts), new SettingsStore(AppPaths.Settings));
+        _window = new MainWindow(session);
         _window.Activate();
     }
 }

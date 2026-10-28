@@ -1,18 +1,158 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using MyCpuMonitor.Core.Layout;
 using MyCpuMonitor.Shell;
+using Windows.Graphics;
 
 namespace MyCpuMonitor;
 
 public sealed partial class MainWindow : Window
 {
-    public MainWindow()
+    private readonly LayoutSession _session;
+    private bool _updatingPicker;
+
+    public MainWindow(LayoutSession session)
     {
+        _session = session;
         InitializeComponent();
-        InfoText.Text =
-            $"Elevated     : {ElevationGate.IsElevated}\n" +
-            $"Process path : {Environment.ProcessPath}\n" +
-            $"Base dir     : {AppContext.BaseDirectory}\n" +
-            $"Runtime      : {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription} " +
-            $"{System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}";
+
+        var scale = RootGrid.XamlRoot?.RasterizationScale ?? Win32.GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
+        AppWindow.Resize(new SizeInt32((int)(1400 * scale), (int)(860 * scale)));
+
+        foreach (var kind in WidgetCatalog.Kinds)
+        {
+            var item = new MenuFlyoutItem { Text = WidgetCatalog.DisplayName(kind) };
+            item.Click += (_, _) => AddWidget(kind);
+            AddWidgetMenu.Items.Add(item);
+        }
+
+        _session.CurrentChanged += OnCurrentLayoutChanged;
+        OnCurrentLayoutChanged();
+    }
+
+    private void OnCurrentLayoutChanged()
+    {
+        Board.Layout = _session.Current;
+        RefreshPicker();
+    }
+
+    private void RefreshPicker()
+    {
+        _updatingPicker = true;
+        try
+        {
+            var names = _session.Names;
+            LayoutPicker.ItemsSource = names;
+            LayoutPicker.SelectedItem = names.FirstOrDefault(n => n == _session.Current.Name);
+        }
+        finally
+        {
+            _updatingPicker = false;
+        }
+    }
+
+    private void OnLayoutPickerSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_updatingPicker || LayoutPicker.SelectedItem is not string name || name == _session.Current.Name)
+            return;
+        Run(() => _session.Switch(name));
+    }
+
+    // --- Edit session -----------------------------------------------------------------------------
+
+    private void OnEditClick(object sender, RoutedEventArgs e) => SetEditing(Run(_session.BeginEdit));
+
+    private void OnDoneClick(object sender, RoutedEventArgs e)
+    {
+        if (Run(_session.CommitEdit))
+            SetEditing(false);
+    }
+
+    private void OnCancelClick(object sender, RoutedEventArgs e)
+    {
+        SetEditing(false);
+        Run(_session.CancelEdit);
+    }
+
+    private void SetEditing(bool editing)
+    {
+        BrowsePanel.Visibility = editing ? Visibility.Collapsed : Visibility.Visible;
+        EditPanel.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
+        Board.IsEditing = editing;
+        if (!editing)
+            Info.IsOpen = false;
+    }
+
+    private void OnBoardLayoutEdited(object? sender, EventArgs e) => Info.IsOpen = false;
+
+    private void AddWidget(WidgetKind kind)
+    {
+        var size = WidgetCatalog.DefaultSize(kind);
+        var bounds = Board.PlacementBounds;
+        var spot = BoardRules.FindFreeSpot(_session.Current.Widgets, size, bounds.Columns, bounds.Rows)
+                   ?? BoardRules.FindFreeSpot(_session.Current.Widgets, WidgetCatalog.MinSize(kind), bounds.Columns, bounds.Rows);
+        if (spot is null)
+        {
+            ShowInfo(InfoBarSeverity.Warning, "No free space",
+                $"No room for a {WidgetCatalog.DisplayName(kind).ToLowerInvariant()} in the visible board. Enlarge the window or make room.");
+            return;
+        }
+        _session.Current.Widgets.Add(WidgetCatalog.Create(kind, spot.Value));
+        Board.Rebuild();
+    }
+
+    // --- Layout management ------------------------------------------------------------------------
+
+    private async void OnNewLayoutClick(object sender, RoutedEventArgs e)
+    {
+        var name = await Dialogs.PromptNameAsync(Content.XamlRoot, "New empty layout", "", "Create");
+        if (name is not null)
+            Run(() => _session.CreateEmpty(name));
+    }
+
+    private async void OnDuplicateLayoutClick(object sender, RoutedEventArgs e)
+    {
+        var name = await Dialogs.PromptNameAsync(Content.XamlRoot, "Duplicate layout", _session.Current.Name + " copy", "Duplicate");
+        if (name is not null)
+            Run(() => _session.Duplicate(name));
+    }
+
+    private async void OnRenameLayoutClick(object sender, RoutedEventArgs e)
+    {
+        var name = await Dialogs.PromptNameAsync(Content.XamlRoot, "Rename layout", _session.Current.Name, "Rename");
+        if (name is not null && Run(() => _session.Rename(name)))
+            RefreshPicker();
+    }
+
+    private async void OnDeleteLayoutClick(object sender, RoutedEventArgs e)
+    {
+        if (await Dialogs.ConfirmAsync(Content.XamlRoot, "Delete layout", $"Delete layout '{_session.Current.Name}'? This cannot be undone.", "Delete"))
+            Run(_session.Delete);
+    }
+
+    // --- Helpers ----------------------------------------------------------------------------------
+
+    /// <summary>Runs a session operation; user-facing failures are shown in the info bar.</summary>
+    private bool Run(Action action)
+    {
+        try
+        {
+            action();
+            return true;
+        }
+        catch (Exception e) when (e is InvalidOperationException or ArgumentException or IOException or NotSupportedException or System.Text.Json.JsonException)
+        {
+            ShowInfo(InfoBarSeverity.Error, "Layout", e.Message);
+            RefreshPicker();
+            return false;
+        }
+    }
+
+    private void ShowInfo(InfoBarSeverity severity, string title, string message)
+    {
+        Info.Severity = severity;
+        Info.Title = title;
+        Info.Message = message;
+        Info.IsOpen = true;
     }
 }

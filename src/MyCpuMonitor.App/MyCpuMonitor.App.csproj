@@ -30,6 +30,10 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\MyCpuMonitor.Core\MyCpuMonitor.Core.csproj" />
+  </ItemGroup>
+
   <!-- Unpackaged publish omits the project .pri (compiled XAML + resources); the MSIX tooling only ships it in packages. -->
   <Target Name="PublishProjectPri" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="'$(AppxPackage)' != 'true'">
     <ItemGroup>

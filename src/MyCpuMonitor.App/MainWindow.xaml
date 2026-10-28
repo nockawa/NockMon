@@ -3,12 +3,107 @@
     x:Class="MyCpuMonitor.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:board="using:MyCpuMonitor.Board"
     Title="My CPU Monitor">
     <Window.SystemBackdrop>
         <MicaBackdrop />
     </Window.SystemBackdrop>
-    <StackPanel Margin="24" Spacing="8">
-        <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="My CPU Monitor" />
-        <TextBlock x:Name="InfoText" IsTextSelectionEnabled="True" FontFamily="Consolas" />
-    </StackPanel>
+
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Padding="8,6" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel x:Name="BrowsePanel" Orientation="Horizontal" Spacing="8">
+                <ComboBox
+                    x:Name="LayoutPicker"
+                    MinWidth="200"
+                    PlaceholderText="Layout"
+                    SelectionChanged="OnLayoutPickerSelectionChanged" />
+                <DropDownButton ToolTipService.ToolTip="Manage layouts">
+                    <FontIcon FontSize="14" Glyph="&#xE712;" />
+                    <DropDownButton.Flyout>
+                        <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                            <MenuFlyoutItem Click="OnNewLayoutClick" Text="New empty layout…">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE710;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Click="OnDuplicateLayoutClick" Text="Duplicate…">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE8C8;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Click="OnRenameLayoutClick" Text="Rename…">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE8AC;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem Click="OnDeleteLayoutClick" Text="Delete…">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE74D;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                        </MenuFlyout>
+                    </DropDownButton.Flyout>
+                </DropDownButton>
+                <Button Click="OnEditClick" ToolTipService.ToolTip="Edit layout (move, resize, add, remove widgets)">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon FontSize="14" Glyph="&#xE70F;" />
+                        <TextBlock Text="Edit" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <StackPanel
+                x:Name="EditPanel"
+                Orientation="Horizontal"
+                Spacing="8"
+                Visibility="Collapsed">
+                <DropDownButton>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon FontSize="14" Glyph="&#xE710;" />
+                        <TextBlock Text="Add widget" />
+                    </StackPanel>
+                    <DropDownButton.Flyout>
+                        <MenuFlyout x:Name="AddWidgetMenu" Placement="BottomEdgeAlignedLeft" />
+                    </DropDownButton.Flyout>
+                </DropDownButton>
+                <Button Click="OnDoneClick" Style="{StaticResource AccentButtonStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon FontSize="14" Glyph="&#xE73E;" />
+                        <TextBlock Text="Done" />
+                    </StackPanel>
+                </Button>
+                <Button Click="OnCancelClick" Content="Cancel" />
+                <TextBlock
+                    x:Name="EditHint"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Text="Drag to move, drag the corner to resize." />
+            </StackPanel>
+        </Grid>
+
+        <InfoBar
+            x:Name="Info"
+            Grid.Row="1"
+            Margin="8,0,8,4"
+            IsOpen="False" />
+
+        <board:BoardView
+            x:Name="Board"
+            Grid.Row="2"
+            LayoutEdited="OnBoardLayoutEdited" />
+    </Grid>
 </Window>
