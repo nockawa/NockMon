@@ -52,16 +52,84 @@ public static class ChartRenderer
                 continue;
             var values = s.Values.AsSpan(0, s.Count);
             var baseline = stackBase[..s.Count];
-            using var line = BuildPath(ds, plot, values, baseline, style.Stacked, dx, yMax, closeToBaseline: false);
-            using var area2 = BuildPath(ds, plot, values, baseline, style.Stacked, dx, yMax, closeToBaseline: true);
-            ds.FillGeometry(area2, Palette.WithAlpha(s.Color, style.Stacked ? (byte)0x70 : (byte)0x28));
-            ds.DrawGeometry(line, s.Color, 1.5f);
+            var n = TopPoints(plot, values, baseline, style.Stacked, dx, yMax, out var top, out var bottom);
+
+            // Area: one polygon (top points, then the baseline backwards): a single interop call.
+            var polygon = Polygon(2 * n);
+            top.AsSpan(0, n).CopyTo(polygon);
+            for (var k = 0; k < n; k++)
+                polygon[2 * n - 1 - k] = bottom[k];
+            using (var area2 = CanvasGeometry.CreatePolygon(ds, polygon))
+                ds.FillGeometry(area2, Palette.WithAlpha(s.Color, style.Stacked ? (byte)0x70 : (byte)0x28));
+
+            // Line: an open figure needs the path builder, over at most one point per pixel column.
+            using (var builder = new CanvasPathBuilder(ds))
+            {
+                builder.BeginFigure(top[0]);
+                for (var k = 1; k < n; k++)
+                    builder.AddLine(top[k]);
+                builder.EndFigure(CanvasFigureLoop.Open);
+                using var line = CanvasGeometry.CreatePath(builder);
+                ds.DrawGeometry(line, s.Color, 1.5f);
+            }
+
             if (style.Stacked)
             {
                 for (var k = 0; k < values.Length; k++)
                     baseline[k] += values[k];
             }
         }
+    }
+
+    [ThreadStatic] private static Vector2[]? _top;
+    [ThreadStatic] private static Vector2[]? _bottom;
+
+    /// <summary>
+    /// Top and baseline points, newest at the right edge, downsampled to pixel columns: per column, the sample with the
+    /// highest top (spikes stay visible) and its baseline.
+    /// </summary>
+    private static int TopPoints(Rect plot, ReadOnlySpan<float> values, ReadOnlySpan<float> baseline, bool stacked, float dx, double yMax,
+        out Vector2[] top, out Vector2[] bottom)
+    {
+        var right = (float)(plot.X + plot.Width);
+        var plotBottom = (float)(plot.Y + plot.Height);
+        var plotTop = (float)plot.Y;
+        var scale = (float)(plot.Height / yMax);
+        var startX = right - (values.Length - 1) * dx;
+        var bucket = Math.Max(1, (int)Math.Ceiling(1 / dx));
+        var capacity = (values.Length + bucket - 1) / bucket;
+        top = _top is { } t && t.Length >= capacity ? t : _top = new Vector2[Math.Max(capacity, 1024)];
+        bottom = _bottom is { } b && b.Length >= capacity ? b : _bottom = new Vector2[Math.Max(capacity, 1024)];
+
+        float Y(float v) => Math.Max(plotTop, plotBottom - v * scale);
+
+        var n = 0;
+        for (var i = 0; i < values.Length; i += bucket)
+        {
+            var end = Math.Min(values.Length, i + bucket);
+            var best = i;
+            var bestTop = values[i] + (stacked ? baseline[i] : 0);
+            for (var k = i + 1; k < end; k++)
+            {
+                var v = values[k] + (stacked ? baseline[k] : 0);
+                if (v > bestTop)
+                    (best, bestTop) = (k, v);
+            }
+            var x = bucket == 1 ? startX + i * dx : startX + (end - 1) * dx;
+            top[n] = new Vector2(x, Y(bestTop));
+            bottom[n] = new Vector2(x, stacked ? Y(baseline[best]) : plotBottom);
+            n++;
+        }
+        return n;
+    }
+
+    /// <summary>Exact-length polygon buffer (CreatePolygon takes the whole array), cached per length.</summary>
+    private static Vector2[] Polygon(int length)
+    {
+        _polygons ??= [];
+        if (!_polygons.TryGetValue(length, out var polygon))
+            _polygons[length] = polygon = new Vector2[length];
+        return polygon;
     }
 
     // CreatePolygon needs an exact-length array; cells of a widget share a width, so a per-length cache is allocation-free.
@@ -106,22 +174,6 @@ public static class ChartRenderer
         ds.FillGeometry(geometry, color);
     }
 
-    /// <summary>Area (filled to zero) and line of one series in <paramref name="plot"/>, newest sample at the right edge.</summary>
-    internal static void DrawSeries(CanvasDrawingSession ds, Rect plot, ReadOnlySpan<float> values, int windowSamples, double yMax,
-        Windows.UI.Color color, byte fillAlpha, float lineWidth)
-    {
-        if (values.Length < 2 || plot.Width < 2 || plot.Height < 2)
-            return;
-        var dx = (float)(plot.Width / Math.Max(1, windowSamples - 1));
-        using var area = BuildPath(ds, plot, values, default, false, dx, yMax, closeToBaseline: true);
-        ds.FillGeometry(area, Palette.WithAlpha(color, fillAlpha));
-        if (lineWidth > 0)
-        {
-            using var line = BuildPath(ds, plot, values, default, false, dx, yMax, closeToBaseline: false);
-            ds.DrawGeometry(line, color, lineWidth);
-        }
-    }
-
     private static double ComputeMax(IReadOnlyList<SeriesData> series, MetricUnit unit, bool stacked, MonitorService monitor)
     {
         if (unit == MetricUnit.Cpu && monitor.CpuScale == CpuScale.Machine)
@@ -155,34 +207,6 @@ public static class ChartRenderer
             return AxisScale.NiceCeiling(max, unit);
         // CPUs: at least one CPU so idle charts don't amplify noise, at most the machine.
         return Math.Clamp(AxisScale.NiceCeiling(max, unit), 1, Math.Max(1, monitor.LogicalProcessors));
-    }
-
-    private static CanvasGeometry BuildPath(ICanvasResourceCreator rc, Rect plot, ReadOnlySpan<float> values, ReadOnlySpan<float> baseline,
-        bool stacked, float dx, double yMax, bool closeToBaseline)
-    {
-        var right = (float)(plot.X + plot.Width);
-        var startX = right - (values.Length - 1) * dx;
-        var bottom = (float)(plot.Y + plot.Height);
-        var scale = (float)(plot.Height / yMax);
-
-        float Y(float v) => Math.Max((float)plot.Y, bottom - v * scale);
-
-        using var builder = new CanvasPathBuilder(rc);
-        builder.BeginFigure(startX, Y(values[0] + (stacked ? baseline[0] : 0)));
-        for (var k = 1; k < values.Length; k++)
-            builder.AddLine(startX + k * dx, Y(values[k] + (stacked ? baseline[k] : 0)));
-
-        if (closeToBaseline)
-        {
-            for (var k = values.Length - 1; k >= 0; k--)
-                builder.AddLine(startX + k * dx, Y(stacked ? baseline[k] : 0));
-            builder.EndFigure(CanvasFigureLoop.Closed);
-        }
-        else
-        {
-            builder.EndFigure(CanvasFigureLoop.Open);
-        }
-        return CanvasGeometry.CreatePath(builder);
     }
 
     private static void DrawGrid(CanvasDrawingSession ds, Rect plot, double yMax, MetricUnit unit, ElementTheme theme, MonitorService monitor)

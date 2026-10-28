@@ -12,6 +12,8 @@ public enum WidgetKind
     ValueList,
     Drivers,
     ProcessEvents,
+    ObjectTypes,
+    GpuEngines,
 }
 
 /// <summary>Widget kinds the user can add, with their default and minimum sizes in cells.</summary>
@@ -29,6 +31,8 @@ public static class WidgetCatalog
         ValueListWidgetConfig => WidgetKind.ValueList,
         DriverTableWidgetConfig => WidgetKind.Drivers,
         ProcessEventsWidgetConfig => WidgetKind.ProcessEvents,
+        ObjectTypesWidgetConfig => WidgetKind.ObjectTypes,
+        GpuEnginesWidgetConfig => WidgetKind.GpuEngines,
         _ => throw new ArgumentException($"Unknown widget {config.GetType().Name}.", nameof(config)),
     };
 
@@ -42,6 +46,8 @@ public static class WidgetCatalog
         WidgetKind.ValueList => "Value list",
         WidgetKind.Drivers => "Drivers (DPC/ISR)",
         WidgetKind.ProcessEvents => "Process events",
+        WidgetKind.ObjectTypes => "Kernel objects",
+        WidgetKind.GpuEngines => "GPU engines",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
@@ -55,6 +61,8 @@ public static class WidgetCatalog
         WidgetKind.ValueList => new(4, 7),
         WidgetKind.Drivers => new(8, 5),
         WidgetKind.ProcessEvents => new(10, 6),
+        WidgetKind.ObjectTypes => new(8, 6),
+        WidgetKind.GpuEngines => new(8, 4),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
@@ -68,6 +76,8 @@ public static class WidgetCatalog
         WidgetKind.ValueList => new(2, 1),
         WidgetKind.Drivers => new(3, 2),
         WidgetKind.ProcessEvents => new(3, 2),
+        WidgetKind.ObjectTypes => new(3, 2),
+        WidgetKind.GpuEngines => new(2, 2),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
@@ -89,6 +99,8 @@ public static class WidgetCatalog
         WidgetKind.ValueList => new ValueListWidgetConfig { Title = "Kernel", Bounds = bounds, Items = ValueListWidgetConfig.KernelOverview() },
         WidgetKind.Drivers => new DriverTableWidgetConfig { Title = "Drivers (DPC/ISR)", Bounds = bounds },
         WidgetKind.ProcessEvents => new ProcessEventsWidgetConfig { Title = "Process events", Bounds = bounds },
+        WidgetKind.ObjectTypes => new ObjectTypesWidgetConfig { Title = "Kernel objects", Bounds = bounds },
+        WidgetKind.GpuEngines => new GpuEnginesWidgetConfig { Title = "GPU engines", Bounds = bounds },
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 }

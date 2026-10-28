@@ -107,6 +107,44 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
         }
     }
 
+    /// <summary>
+    /// NtQueryObject(ObjectTypesInformation): OBJECT_TYPES_INFORMATION { ULONG NumberOfTypes; OBJECT_TYPE_INFORMATION[] }
+    /// with entries pointer-aligned, each followed by its name buffer (MaximumLength). Validated against the counts used
+    /// to diagnose this machine's token/job leak. Names are cached per type index.
+    /// </summary>
+    private void CollectObjectTypes(RawSample sample)
+    {
+        uint returned;
+        if (NtDll.NtQueryObject(0, NtDll.ObjectTypesInformation, _objectTypesBuffer, ObjectTypesLength, &returned) < 0)
+        {
+            sample.ObjectTypeCount = 0;
+            return;
+        }
+        var count = (int)*(uint*)_objectTypesBuffer;
+        if (sample.ObjectTypes.Length < count)
+            sample.ObjectTypes = new RawObjectType[count];
+        var entry = _objectTypesBuffer + sizeof(nint);
+        for (var i = 0; i < count; i++)
+        {
+            ref readonly var name = ref *(UnicodeString*)entry;
+            ref var t = ref sample.ObjectTypes[i];
+            if (i >= _objectTypeNames.Count)
+                _objectTypeNames.Add(new string((char*)name.Buffer, 0, name.Length / 2));
+            t.Name = _objectTypeNames[i];
+            t.Objects = *(uint*)(entry + 16);
+            t.Handles = *(uint*)(entry + 20);
+            t.PeakObjects = *(uint*)(entry + 40);
+            t.PeakHandles = *(uint*)(entry + 44);
+            entry = (byte*)(((nint)(entry + ObjectTypeInformationSize + name.MaximumLength) + (sizeof(nint) - 1)) & ~(nint)(sizeof(nint) - 1));
+        }
+        sample.ObjectTypeCount = count;
+    }
+
+    private const uint ObjectTypesLength = 64 * 1024;
+    private const int ObjectTypeInformationSize = 104; // OBJECT_TYPE_INFORMATION on x64.
+    private readonly byte* _objectTypesBuffer = (byte*)NativeMemory.Alloc(ObjectTypesLength);
+    private readonly List<string> _objectTypeNames = [];
+
     private void CollectPoolTags(RawSample sample)
     {
         uint required;
@@ -204,6 +242,7 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
         ObjectDisposedException.ThrowIf(_buffer == null, this);
         sample.ProcessesElapsed = Now;
         CollectPoolTags(sample);
+        CollectObjectTypes(sample);
         while (true)
         {
             uint required;
@@ -349,6 +388,7 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
         NativeMemory.Free(_buffer);
         NativeMemory.Free(_coreBuffer);
         NativeMemory.Free(_poolBuffer);
+        NativeMemory.Free(_objectTypesBuffer);
         _buffer = null;
         _coreBuffer = null;
         _poolBuffer = null;

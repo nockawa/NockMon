@@ -1,6 +1,7 @@
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using MyCpuMonitor.Core.Etw;
+using MyCpuMonitor.Core.Gpu;
 using MyCpuMonitor.Core.Layout;
 using MyCpuMonitor.Core.Persistence;
 using MyCpuMonitor.Core.Sampling;
@@ -14,6 +15,7 @@ public partial class App : Application
     private NativeSystemProbe? _probe;
     private EtwKernelMonitor? _events;
     private SamplingEngine? _engine;
+    private GpuProbe? _gpu;
 
     public App()
     {
@@ -32,7 +34,8 @@ public partial class App : Application
         AppDomain.CurrentDomain.ProcessExit += (_, _) => _events.Dispose();
         AppDomain.CurrentDomain.UnhandledException += (_, _) => _events.Dispose();
         UnhandledException += (_, _) => _events.Dispose();
-        _engine = new SamplingEngine(_probe, settings.SamplingOptions, _events);
+        _gpu = new GpuProbe();
+        _engine = new SamplingEngine(_probe, settings.SamplingOptions, _events, _gpu);
         var monitor = new MonitorService(_engine, DispatcherQueue.GetForCurrentThread(), settings.CpuScale);
 
         _window = new MainWindow(session, monitor);
@@ -45,6 +48,7 @@ public partial class App : Application
     {
         _engine?.Dispose();
         _events?.Dispose(); // Stops the kernel session: it would otherwise outlive the process.
+        _gpu?.Dispose();
         _probe?.Dispose();
     }
 }

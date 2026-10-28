@@ -47,15 +47,19 @@ public sealed class SamplingEngine : IDisposable
     private Thread? _thread;
     private volatile bool _stopping;
     private readonly Etw.IKernelEventSource? _events;
+    private readonly Gpu.IGpuSource? _gpu;
     private readonly Dictionary<int, Etw.ProcessIoTotals> _scanIo = new();
     private readonly List<Etw.DriverTotals> _scanDrivers = [];
+    private readonly Dictionary<int, double> _gpuByPid = new();
 
     /// <param name="events">Optional kernel event stream (ETW) for disk, network and DPC/ISR metrics. Not owned.</param>
-    public SamplingEngine(ISystemProbe probe, SamplingOptions options, Etw.IKernelEventSource? events = null)
+    /// <param name="gpu">Optional GPU source. Not owned.</param>
+    public SamplingEngine(ISystemProbe probe, SamplingOptions options, Etw.IKernelEventSource? events = null, Gpu.IGpuSource? gpu = null)
     {
         options.Validate();
         _probe = probe;
         _events = events;
+        _gpu = gpu;
         _watched = new WatchedProcessTracker(probe);
         _options = options;
         _history = CreateHistory();
@@ -73,6 +77,12 @@ public sealed class SamplingEngine : IDisposable
 
     /// <summary>Kernel event stream, if any (status, process event log).</summary>
     public Etw.IKernelEventSource? KernelEvents => _events;
+
+    /// <summary>GPU adapters (empty without a GPU source).</summary>
+    public IReadOnlyList<Gpu.GpuAdapterInfo> GpuAdapters => _gpu?.Adapters ?? [];
+
+    /// <summary>GPU engines to poll (each costs ~0.3 ms per sample): (adapter name, engine name pattern).</summary>
+    public void SetWatchedGpuEngines(IEnumerable<(string Adapter, string Pattern)> engines) => _gpu?.SetWatchedEngines(engines);
 
     public SamplingOptions Options
     {
@@ -168,6 +178,15 @@ public sealed class SamplingEngine : IDisposable
                     if (scanned)
                         SampleProcessor.ApplyScanEvents(_spareTable, _scanIo, _scanDrivers);
                 }
+                if (_gpu is not null)
+                {
+                    _gpu.CollectProcesses(_gpuByPid);
+                    if (scanned)
+                    {
+                        foreach (ref var p in _spareTable.Items.AsSpan(0, _spareTable.Count))
+                            p.GpuPercent = _gpuByPid.GetValueOrDefault(p.Pid);
+                    }
+                }
                 _watched.OnScan(_raw, scanned ? _spareTable : null);
                 _samplesUntilScan = Options.ScanEvery;
                 LastScanDuration = Stopwatch.GetElapsedTime(scanStart);
@@ -182,6 +201,7 @@ public sealed class SamplingEngine : IDisposable
             if (!_processor.ProcessSystem(_raw, _back))
                 return false;
             SampleProcessor.ApplyEvents(_back, in events);
+            _gpu?.Collect(_back.Gpus);
 
             lock (_lock)
             {

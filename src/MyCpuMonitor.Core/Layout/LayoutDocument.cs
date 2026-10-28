@@ -90,6 +90,8 @@ public readonly record struct GridRect(int Column, int Row, int ColumnSpan, int 
 [JsonDerivedType(typeof(ValueListWidgetConfig), "valueList")]
 [JsonDerivedType(typeof(DriverTableWidgetConfig), "drivers")]
 [JsonDerivedType(typeof(ProcessEventsWidgetConfig), "processEvents")]
+[JsonDerivedType(typeof(ObjectTypesWidgetConfig), "objectTypes")]
+[JsonDerivedType(typeof(GpuEnginesWidgetConfig), "gpuEngines")]
 public abstract class WidgetConfig
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -173,6 +175,29 @@ public sealed class DriverTableWidgetConfig : WidgetConfig
 {
     public int TopCount { get; set; } = 15;
     public Sampling.DriverField SortBy { get; set; } = Sampling.DriverField.DpcTime;
+    public bool Descending { get; set; } = true;
+}
+
+/// <summary>One small graph per engine of a GPU (engines are polled only while shown: ~0.3 ms each per sample).</summary>
+public sealed class GpuEnginesWidgetConfig : WidgetConfig
+{
+    /// <summary>Adapter display name; null = the first adapter.</summary>
+    public string? Adapter { get; set; }
+
+    /// <summary>Engine name pattern ("*", "Compute*;3D", "Video*").</summary>
+    public string EnginePattern { get; set; } = "*";
+
+    public int WindowSeconds { get; set; } = 60;
+
+    /// <summary>Grid columns; 0 = automatic.</summary>
+    public int Columns { get; set; }
+}
+
+/// <summary>Kernel objects per type: counts, handles, growth. Objects without handles are held by the kernel.</summary>
+public sealed class ObjectTypesWidgetConfig : WidgetConfig
+{
+    public int TopCount { get; set; } = 20;
+    public Sampling.ObjectTypeField SortBy { get; set; } = Sampling.ObjectTypeField.Objects;
     public bool Descending { get; set; } = true;
 }
 

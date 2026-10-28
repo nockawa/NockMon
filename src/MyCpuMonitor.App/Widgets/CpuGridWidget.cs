@@ -19,14 +19,6 @@ namespace MyCpuMonitor.Widgets;
 /// </summary>
 public sealed partial class CpuGridWidget : UserControl, IMonitorWidget
 {
-    private const float Gap = 3;
-
-    private static readonly CanvasTextFormat LabelFormat = new() { FontSize = 10, FontFamily = "Segoe UI", WordWrapping = CanvasWordWrapping.NoWrap };
-    private static readonly CanvasTextFormat ValueFormat = new()
-    {
-        FontSize = 10, FontFamily = "Segoe UI", WordWrapping = CanvasWordWrapping.NoWrap, HorizontalAlignment = CanvasHorizontalAlignment.Right,
-    };
-
     private static readonly Color KernelColor = Palette.Series[1];
     private static readonly Color MainFill = Palette.WithAlpha(Palette.Series[0], 0xA0);
     private static readonly Color KernelFill = Palette.WithAlpha(KernelColor, 0xC0);
@@ -77,47 +69,9 @@ public sealed partial class CpuGridWidget : UserControl, IMonitorWidget
 
     private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
-        var ds = args.DrawingSession;
-        var count = _main.Length;
-        double width = sender.ActualWidth, height = sender.ActualHeight;
-        var (columns, rows) = GridArrangement.Arrange(count, width, height, _config.Columns);
-        if (columns == 0)
-            return;
-
-        var cellWidth = (float)((width - Gap * (columns - 1)) / columns);
-        var cellHeight = (float)((height - Gap * (rows - 1)) / rows);
-        if (cellWidth < 4 || cellHeight < 4)
-            return;
-
         var isFraction = MetricCatalog.Get(_config.Metric).Unit == MetricUnit.Cpu;
-        var yMax = isFraction ? 1.0 : SharedMax();
-        var theme = ActualTheme;
-        var border = Palette.CellBorder(theme);
-        var text = Palette.Text(theme);
-        var subtle = Palette.SubtleText(theme);
-        var showText = cellHeight >= 22 && cellWidth >= 40;
-
-        for (var i = 0; i < count; i++)
-        {
-            var x = (i % columns) * (cellWidth + Gap);
-            var y = (i / columns) * (cellHeight + Gap);
-            var cell = new Rect(x, y, cellWidth, cellHeight);
-            var main = _main[i];
-            ChartRenderer.FillArea(ds, cell, main.Values.AsSpan(0, main.Count), _windowSamples, yMax, MainFill);
-            if (_kernel.Length > 0)
-            {
-                var kernel = _kernel[i];
-                ChartRenderer.FillArea(ds, cell, kernel.Values.AsSpan(0, kernel.Count), _windowSamples, yMax, KernelFill);
-            }
-            // Border last, inset half a pixel so the 1 px line is crisp and drawn over the area's edge.
-            ds.DrawRectangle(x + 0.5f, y + 0.5f, cellWidth - 1, cellHeight - 1, border, 1);
-
-            if (showText)
-            {
-                ds.DrawText(main.Label, x + 3, y + 1, subtle, LabelFormat);
-                ds.DrawText(FormatValue(main, isFraction), new Rect(x, y + 1, cellWidth - 3, 14), text, ValueFormat);
-            }
-        }
+        SmallMultiples.Draw(args.DrawingSession, new Windows.Foundation.Size(sender.ActualWidth, sender.ActualHeight), _main, _kernel.Length > 0 ? _kernel : null, _windowSamples,
+            isFraction ? 1.0 : SharedMax(), _config.Columns, MainFill, KernelFill, ActualTheme, s => FormatValue(s, isFraction));
     }
 
     private string FormatValue(SeriesData series, bool isFraction)

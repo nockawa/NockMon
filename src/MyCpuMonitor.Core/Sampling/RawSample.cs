@@ -80,6 +80,16 @@ public struct RawKernel
     public double NominalMhz;
 }
 
+/// <summary>Live objects and handles of one kernel object type (scan rate).</summary>
+public struct RawObjectType
+{
+    public string Name;
+    public uint Objects;
+    public uint Handles;
+    public uint PeakObjects;
+    public uint PeakHandles;
+}
+
 /// <summary>One pool tag's cumulative counters (scan rate).</summary>
 public struct RawPoolTag
 {
@@ -109,6 +119,10 @@ public sealed class RawSample
     public RawCore[] Cores = [];
     public RawMemory Memory;
     public RawKernel Kernel;
+
+    /// <summary>Kernel object types (scan rate).</summary>
+    public RawObjectType[] ObjectTypes = new RawObjectType[128];
+    public int ObjectTypeCount;
 
     /// <summary>Pool tags (scan rate, with the processes).</summary>
     public RawPoolTag[] PoolTags = new RawPoolTag[4096];

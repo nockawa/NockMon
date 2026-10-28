@@ -29,6 +29,8 @@ internal static class WidgetEditor
             ValueListWidgetConfig l => BuildValueList(panel, l, context),
             DriverTableWidgetConfig d => BuildDrivers(panel, d),
             ProcessEventsWidgetConfig e => BuildProcessEvents(panel, e),
+            GpuEnginesWidgetConfig g => BuildGpuEngines(panel, g, context),
+            ObjectTypesWidgetConfig o => BuildSortedTable(panel, o.TopCount, o.SortBy, o.Descending, (top, sort, desc) => (o.TopCount, o.SortBy, o.Descending) = (top, sort, desc)),
             _ => throw new ArgumentException($"Unknown widget {clone.GetType().Name}.", nameof(config)),
         };
 
@@ -214,6 +216,62 @@ internal static class WidgetEditor
             config.TopCount = double.IsNaN(top.Value) ? 20 : (int)top.Value;
             config.SortBy = (Core.Sampling.PoolTagField)((ComboBoxItem)sort.SelectedItem).Tag;
             config.Descending = descending.IsOn;
+            return null;
+        };
+    }
+
+    private static Func<string?> BuildGpuEngines(StackPanel panel, GpuEnginesWidgetConfig config, EditorContext context)
+    {
+        if (context.Gpus.Count == 0)
+        {
+            panel.Children.Add(new TextBlock { Text = "No GPU found." });
+            return () => null;
+        }
+        var adapter = new ComboBox { Header = "GPU", MinWidth = 280 };
+        foreach (var gpu in context.Gpus)
+            adapter.Items.Add(new ComboBoxItem { Content = gpu.Name, Tag = gpu });
+        adapter.SelectedItem = adapter.Items.Cast<ComboBoxItem>().FirstOrDefault(i => ((Core.Gpu.GpuAdapterInfo)i.Tag).Name == config.Adapter) ?? adapter.Items[0];
+        var pattern = new TextBox { Header = "Engines (name pattern)", Text = config.EnginePattern, MinWidth = 200 };
+        var engines = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.7, FontSize = 12 };
+        void ShowEngines() => engines.Text = "Engines: " + string.Join(", ", ((Core.Gpu.GpuAdapterInfo)((ComboBoxItem)adapter.SelectedItem).Tag).Engines);
+        adapter.SelectionChanged += (_, _) => ShowEngines();
+        ShowEngines();
+        var window = WindowPicker("Time window", config.WindowSeconds);
+        var columns = new NumberBox
+        {
+            Header = "Columns (0 = automatic)", Value = config.Columns, Minimum = 0, Maximum = 64,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 160,
+        };
+        panel.Children.Add(Row(adapter, pattern));
+        panel.Children.Add(engines);
+        panel.Children.Add(new TextBlock { Text = "Each shown engine is queried every sample (~0.3 ms each).", Opacity = 0.7, FontSize = 12 });
+        panel.Children.Add(Row(window, columns));
+        return () =>
+        {
+            if (string.IsNullOrWhiteSpace(pattern.Text))
+                return "Enter an engine pattern (* for all).";
+            config.Adapter = ((Core.Gpu.GpuAdapterInfo)((ComboBoxItem)adapter.SelectedItem).Tag).Name;
+            config.EnginePattern = pattern.Text.Trim();
+            config.WindowSeconds = (int)((ComboBoxItem)window.SelectedItem).Tag;
+            config.Columns = double.IsNaN(columns.Value) ? 0 : (int)columns.Value;
+            return null;
+        };
+    }
+
+    /// <summary>Rows / sort field / order editor for tables sorted by an enum field.</summary>
+    private static Func<string?> BuildSortedTable<TField>(StackPanel panel, int topCount, TField sortBy, bool isDescending, Action<int, TField, bool> apply)
+        where TField : struct, Enum
+    {
+        var top = new NumberBox { Header = "Rows", Value = topCount, Minimum = 1, Maximum = 500, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 120 };
+        var sort = new ComboBox { Header = "Sort by", MinWidth = 200 };
+        foreach (var field in Enum.GetValues<TField>())
+            sort.Items.Add(new ComboBoxItem { Content = field.ToString(), Tag = field });
+        sort.SelectedItem = sort.Items.Cast<ComboBoxItem>().First(i => Equals(i.Tag, sortBy));
+        var descending = new ToggleSwitch { Header = "Descending", IsOn = isDescending };
+        panel.Children.Add(Row(top, sort, descending));
+        return () =>
+        {
+            apply(double.IsNaN(top.Value) ? topCount : (int)top.Value, (TField)((ComboBoxItem)sort.SelectedItem).Tag, descending.IsOn);
             return null;
         };
     }

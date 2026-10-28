@@ -11,6 +11,11 @@ internal static unsafe partial class NtDll
     public const int SystemMemoryListInformation = 80;
     public const int STATUS_INFO_LENGTH_MISMATCH = unchecked((int)0xC0000004);
 
+    public const int ObjectTypesInformation = 3;
+
+    [LibraryImport("ntdll.dll")]
+    public static partial int NtQueryObject(nint handle, int objectInformationClass, void* objectInformation, uint length, uint* returnLength);
+
     [LibraryImport("ntdll.dll")]
     public static partial int NtQueryTimerResolution(uint* maximumTime, uint* minimumTime, uint* currentTime);
 

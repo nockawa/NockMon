@@ -113,7 +113,11 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Processes used by charts and value widgets are sampled at the fast rate.</summary>
-    private void UpdateWatchedPatterns() => _monitor.Engine.SetWatchedPatterns(LayoutPatterns.Watched(_session.Current));
+    private void UpdateWatchedPatterns()
+    {
+        _monitor.Engine.SetWatchedPatterns(LayoutPatterns.Watched(_session.Current));
+        _monitor.Engine.SetWatchedGpuEngines(LayoutPatterns.GpuEngines(_session.Current, _monitor.Engine.GpuAdapters));
+    }
 
     private static void SelectByTag(ComboBox picker, int value) =>
         picker.SelectedItem = picker.Items.Cast<ComboBoxItem>()
@@ -355,8 +359,8 @@ public sealed partial class MainWindow : Window
 
     private async void OnConfigureRequested(WidgetConfig config)
     {
-        var context = _monitor.Engine.Read(_monitor.LogicalProcessors,
-            static (cores, _, history) => new EditorContext(history.ProcessNames.ToList(), cores));
+        var context = _monitor.Engine.Read((cores: _monitor.LogicalProcessors, gpus: _monitor.Engine.GpuAdapters),
+            static (state, _, history) => new EditorContext(history.ProcessNames.ToList(), state.cores, history.ObjectTypeNames.ToList(), state.gpus));
         var edited = await WidgetEditor.EditAsync(Content.XamlRoot, config, context);
         if (edited is not null)
             Board.ReplaceWidget(config, edited); // Raises LayoutEdited, which updates the watched patterns.

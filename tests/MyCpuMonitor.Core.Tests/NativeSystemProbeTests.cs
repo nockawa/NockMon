@@ -7,7 +7,12 @@ using MyCpuMonitor.Core.Sampling;
 
 namespace MyCpuMonitor.Core.Tests;
 
+/// <summary>Tests measuring this process's own CPU: they must not share the process with other running tests.</summary>
+[CollectionDefinition(DisableParallelization = true)]
+public sealed class CpuMeasurementCollection;
+
 /// <summary>Integration tests against the real OS.</summary>
+[Collection(typeof(CpuMeasurementCollection))]
 public class NativeSystemProbeTests
 {
     [Fact]

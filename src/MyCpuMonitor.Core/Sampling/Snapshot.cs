@@ -40,6 +40,9 @@ public struct ProcessStats
     public double NetSendBytes;
     public double NetRecvBytes;
 
+    /// <summary>GPU utilization (%) over the scan interval (NVML, NVIDIA GPUs).</summary>
+    public double GpuPercent;
+
     public readonly ProcessKey Key => new(Pid, CreateTime);
     public readonly double IoOps => IoReadOps + IoWriteOps + IoOtherOps;
     public readonly double IoBytes => IoReadBytes + IoWriteBytes + IoOtherBytes;
@@ -83,6 +86,7 @@ public struct ProcessStats
         ProcessField.NetSend => NetSendBytes,
         ProcessField.NetRecv => NetRecvBytes,
         ProcessField.NetBytes => NetSendBytes + NetRecvBytes,
+        ProcessField.Gpu => GpuPercent,
         _ => throw new ArgumentOutOfRangeException(nameof(field), field, null),
     };
 }
@@ -235,6 +239,42 @@ public struct SystemStats
     };
 }
 
+public enum ObjectTypeField
+{
+    Name,
+    Objects,
+    Handles,
+    /// <summary>Objects per minute since the previous scan (sustained growth: a leak).</summary>
+    ObjectGrowth,
+    HandleGrowth,
+    PeakObjects,
+    PeakHandles,
+}
+
+/// <summary>Live objects of one kernel object type. Objects far above handles are referenced by the kernel itself.</summary>
+public struct ObjectTypeStats
+{
+    public string Name;
+    public long Objects;
+    public long Handles;
+    public long PeakObjects;
+    public long PeakHandles;
+    public double ObjectGrowth;
+    public double HandleGrowth;
+
+    public readonly double GetValue(ObjectTypeField field) => field switch
+    {
+        ObjectTypeField.Name => double.NaN,
+        ObjectTypeField.Objects => Objects,
+        ObjectTypeField.Handles => Handles,
+        ObjectTypeField.ObjectGrowth => ObjectGrowth,
+        ObjectTypeField.HandleGrowth => HandleGrowth,
+        ObjectTypeField.PeakObjects => PeakObjects,
+        ObjectTypeField.PeakHandles => PeakHandles,
+        _ => throw new ArgumentOutOfRangeException(nameof(field), field, null),
+    };
+}
+
 public enum PoolTagField
 {
     Tag,
@@ -287,6 +327,11 @@ public sealed class ProcessTable
     /// <summary>Drivers with DPC/ISR activity during the interval (ETW).</summary>
     public List<DriverStats> Drivers = [];
 
+    public ObjectTypeStats[] ObjectTypes = new ObjectTypeStats[128];
+    public int ObjectTypeCount;
+
+    public ReadOnlySpan<ObjectTypeStats> ObjectTypeSpan => ObjectTypes.AsSpan(0, ObjectTypeCount);
+
     public ReadOnlySpan<PoolTagStats> PoolTagSpan => PoolTags.AsSpan(0, PoolTagCount);
 
     /// <summary>History scan index of this table, -1 before the first one.</summary>
@@ -325,6 +370,9 @@ public sealed class Snapshot
 
     /// <summary>Latest process scan. Shared between consecutive snapshots until the next scan.</summary>
     public ProcessTable Table = new();
+
+    /// <summary>One entry per GPU adapter (sample rate).</summary>
+    public List<Gpu.GpuStats> Gpus = [];
 
     public ProcessStats[] Processes => Table.Items;
     public int ProcessCount => Table.Count;

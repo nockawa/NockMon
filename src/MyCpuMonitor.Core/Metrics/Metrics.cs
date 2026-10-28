@@ -12,6 +12,11 @@ public enum MetricUnit
     Timestamp,
     Milliseconds,
     Megahertz,
+    /// <summary>0..100.</summary>
+    Percent,
+    Celsius,
+    Watts,
+    Rpm,
 }
 
 /// <summary>How CPU values are displayed. Stored values are always in logical CPUs used.</summary>
@@ -68,6 +73,9 @@ public enum ProcessField
     NetSend,
     NetRecv,
     NetBytes,
+
+    /// <summary>GPU utilization of the process (NVML, NVIDIA only), scan rate.</summary>
+    Gpu,
 }
 
 public enum SystemMetric
@@ -144,13 +152,34 @@ public static class MetricCatalog
     [
         ProcessField.Cpu, ProcessField.PrivateBytes, ProcessField.WorkingSet, ProcessField.IoOps, ProcessField.IoBytes,
         ProcessField.Handles, ProcessField.Threads, ProcessField.HardFaults, ProcessField.Instances,
-        ProcessField.DiskBytes, ProcessField.NetBytes,
+        ProcessField.DiskBytes, ProcessField.NetBytes, ProcessField.Gpu,
     ];
 
     public static int HistoryIndexOf(ProcessField field) => Array.IndexOf(ProcessHistoryFields, field);
 
     /// <summary>History fields also sampled at the fast rate for watched processes (handles); the others are scan-rate only.</summary>
-    public static bool IsWatchedField(ProcessField field) => field is not (ProcessField.DiskBytes or ProcessField.NetBytes);
+    public static bool IsWatchedField(ProcessField field) => field is not (ProcessField.DiskBytes or ProcessField.NetBytes or ProcessField.Gpu);
+
+    public static MetricInfo Get(Gpu.GpuMetric metric) => metric switch
+    {
+        Gpu.GpuMetric.Utilization => new("GPU utilization", "GPU", MetricUnit.Percent, true),
+        Gpu.GpuMetric.Engine => new("GPU engine", "Engine", MetricUnit.Percent, true),
+        Gpu.GpuMetric.MemoryControllerLoad => new("GPU memory controller", "Mem ctl", MetricUnit.Percent, true),
+        Gpu.GpuMetric.EncoderLoad => new("GPU encoder", "Enc", MetricUnit.Percent, true),
+        Gpu.GpuMetric.DecoderLoad => new("GPU decoder", "Dec", MetricUnit.Percent, true),
+        Gpu.GpuMetric.DedicatedUsed => new("GPU dedicated memory used", "VRAM", MetricUnit.Bytes, true),
+        Gpu.GpuMetric.DedicatedTotal => new("GPU dedicated memory", "VRAM total", MetricUnit.Bytes, true),
+        Gpu.GpuMetric.SharedUsed => new("GPU shared memory used", "Shared", MetricUnit.Bytes, true),
+        Gpu.GpuMetric.SharedTotal => new("GPU shared memory", "Shared total", MetricUnit.Bytes, true),
+        Gpu.GpuMetric.Temperature => new("GPU temperature", "Temp", MetricUnit.Celsius, true),
+        Gpu.GpuMetric.Power => new("GPU power", "Power", MetricUnit.Watts, true),
+        Gpu.GpuMetric.PowerPercent => new("GPU power (%)", "Power %", MetricUnit.Percent, true),
+        Gpu.GpuMetric.FanPercent => new("GPU fan", "Fan", MetricUnit.Percent, true),
+        Gpu.GpuMetric.FanRpm => new("GPU fan speed", "Fan rpm", MetricUnit.Rpm, true),
+        Gpu.GpuMetric.CoreClock => new("GPU core clock", "Core", MetricUnit.Megahertz, true),
+        Gpu.GpuMetric.MemoryClock => new("GPU memory clock", "Mem clk", MetricUnit.Megahertz, true),
+        _ => throw new ArgumentOutOfRangeException(nameof(metric), metric, null),
+    };
 
     /// <summary>Default table column width in effective pixels.</summary>
     public static double DefaultColumnWidth(ProcessField field) => field switch
@@ -199,6 +228,7 @@ public static class MetricCatalog
         ProcessField.NetSend => new("Network send", "Net ↑", MetricUnit.BytesPerSecond),
         ProcessField.NetRecv => new("Network receive", "Net ↓", MetricUnit.BytesPerSecond),
         ProcessField.NetBytes => new("Network throughput", "Net", MetricUnit.BytesPerSecond, true),
+        ProcessField.Gpu => new("GPU (NVIDIA)", "GPU", MetricUnit.Percent, true),
         _ => throw new ArgumentOutOfRangeException(nameof(field), field, null),
     };
 

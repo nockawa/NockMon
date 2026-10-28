@@ -94,6 +94,7 @@ public sealed class ProcessQuery
         s.DiskWriteBytes += p.DiskWriteBytes;
         s.NetSendBytes += p.NetSendBytes;
         s.NetRecvBytes += p.NetRecvBytes;
+        s.GpuPercent += p.GpuPercent;
         s.Cpu += p.Cpu;
         s.CpuUser += p.CpuUser;
         s.CpuKernel += p.CpuKernel;

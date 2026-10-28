@@ -30,6 +30,9 @@ public sealed class HistoryStore
     private readonly Dictionary<string, WatchedSeries> _watched = new(StringComparer.Ordinal);
     private readonly Dictionary<string, NamePattern> _patterns = new();
     private readonly HashSet<string> _seenPatterns = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (float[] Objects, float[] Handles)> _objectTypes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, GpuRings> _gpus = new(StringComparer.OrdinalIgnoreCase);
+    private float[] _gpuScratch = [];
     private float[] _scanScratch = [];
     private float[] _scratch = [];
 
@@ -84,6 +87,9 @@ public sealed class HistoryStore
     /// <summary>Image names currently held in history.</summary>
     public IEnumerable<string> ProcessNames => _names.Keys;
 
+    /// <summary>Kernel object type names seen in scans.</summary>
+    public IEnumerable<string> ObjectTypeNames => _objectTypes.Keys;
+
     /// <summary>Appends a fast sample: system, cores, and the watched-pattern aggregates of this tick.</summary>
     public void AppendSample(Snapshot snapshot, IReadOnlyList<WatchedAggregate> watched)
     {
@@ -117,7 +123,67 @@ public sealed class HistoryStore
                 _watched.Remove(pattern); // No longer watched: its fast data would go stale.
         }
 
+        foreach (var gpu in snapshot.Gpus)
+        {
+            if (!_gpus.TryGetValue(gpu.Name, out var rings) || rings.Engines.Length != gpu.Engines.Length)
+                _gpus[gpu.Name] = rings = new GpuRings(Capacity, gpu.Engines.Length);
+            rings.EngineNames = gpu.EngineNames;
+            for (var m = 0; m < Gpu.GpuStats.MetricCount; m++)
+                rings.Metrics[m][slot] = (float)gpu.Metrics[m];
+            for (var e = 0; e < gpu.Engines.Length; e++)
+                rings.Engines[e][slot] = (float)gpu.Engines[e];
+        }
+
         TotalSamples++;
+    }
+
+    private sealed class GpuRings(int capacity, int engines)
+    {
+        public readonly float[][] Metrics = CreateBuffers(Gpu.GpuStats.MetricCount, capacity);
+        public readonly float[][] Engines = CreateBuffers(engines, capacity);
+        public string[] EngineNames = [];
+    }
+
+    /// <summary>
+    /// GPU series: a metric ring, or for <see cref="Gpu.GpuMetric.Engine"/> the busiest engine matching the pattern per
+    /// sample. Unavailable values (NaN: metric not supported, engine not polled) read as 0.
+    /// </summary>
+    private void ReadGpu(GpuSeries series, Span<float> destination)
+    {
+        destination.Clear();
+        if (!_gpus.TryGetValue(series.Adapter, out var rings))
+            return;
+
+        if (series.Metric != Gpu.GpuMetric.Engine)
+        {
+            CopyLatest(rings.Metrics[(int)series.Metric], TotalSamples, Capacity, destination);
+        }
+        else
+        {
+            if (!_patterns.TryGetValue(series.Engine ?? "*", out var pattern))
+                _patterns[series.Engine ?? "*"] = pattern = new NamePattern(series.Engine ?? "*");
+            if (_gpuScratch.Length < Capacity)
+                _gpuScratch = new float[Capacity];
+            var one = _gpuScratch.AsSpan(0, destination.Length);
+            destination.Fill(float.NaN);
+            for (var e = 0; e < rings.Engines.Length && e < rings.EngineNames.Length; e++)
+            {
+                if (!pattern.IsMatch(rings.EngineNames[e]))
+                    continue;
+                CopyLatest(rings.Engines[e], TotalSamples, Capacity, one);
+                for (var i = 0; i < destination.Length; i++)
+                {
+                    if (!float.IsNaN(one[i]) && (float.IsNaN(destination[i]) || one[i] > destination[i]))
+                        destination[i] = one[i];
+                }
+            }
+        }
+
+        for (var i = 0; i < destination.Length; i++)
+        {
+            if (!float.IsFinite(destination[i]))
+                destination[i] = 0;
+        }
     }
 
     /// <summary>Appends a process scan, attached to the last appended sample.</summary>
@@ -147,6 +213,14 @@ public sealed class HistoryStore
                 series.Values[f][slot] += (float)p.GetValue(MetricCatalog.ProcessHistoryFields[f]);
         }
 
+        foreach (ref readonly var t in table.ObjectTypeSpan)
+        {
+            if (!_objectTypes.TryGetValue(t.Name, out var rings))
+                _objectTypes[t.Name] = rings = (new float[ScanCapacity], new float[ScanCapacity]);
+            rings.Objects[slot] = t.Objects;
+            rings.Handles[slot] = t.Handles;
+        }
+
         TotalScans++;
 
         foreach (var (name, series) in _names)
@@ -174,6 +248,12 @@ public sealed class HistoryStore
                 break;
             case ProcessSeries s:
                 ReadProcess(s, dst);
+                break;
+            case ObjectTypeSeries s:
+                ReadObjectType(s, dst);
+                break;
+            case GpuSeries s:
+                ReadGpu(s, dst);
                 break;
             default:
                 throw new ArgumentException($"Unsupported series {series}.", nameof(series));
@@ -214,19 +294,11 @@ public sealed class HistoryStore
     /// <summary>Sums matching name series per scan, then holds each scan's value until the next one.</summary>
     private void UpsampleScans(string patternText, int field, long firstSample, Span<float> destination)
     {
-        destination.Clear();
         var scans = ScanCount;
-        if (scans == 0)
-            return;
-
         if (!_patterns.TryGetValue(patternText, out var pattern))
             _patterns[patternText] = pattern = new NamePattern(patternText);
 
-        if (_scanScratch.Length < scans)
-        {
-            _scanScratch = new float[ScanCapacity];
-            _scratch = new float[ScanCapacity];
-        }
+        EnsureScratch();
         var sums = _scanScratch.AsSpan(0, scans);
         var one = _scratch.AsSpan(0, scans);
         sums.Clear();
@@ -238,7 +310,39 @@ public sealed class HistoryStore
             for (var i = 0; i < scans; i++)
                 sums[i] += one[i];
         }
+        HoldScans(sums, firstSample, destination);
+    }
 
+    private void ReadObjectType(ObjectTypeSeries series, Span<float> destination)
+    {
+        var scans = ScanCount;
+        EnsureScratch();
+        var values = _scanScratch.AsSpan(0, scans);
+        if (_objectTypes.TryGetValue(series.TypeName, out var rings))
+            CopyLatest(series.Metric == ObjectTypeMetric.Objects ? rings.Objects : rings.Handles, TotalScans, ScanCapacity, values);
+        else
+            values.Clear();
+        HoldScans(values, TotalSamples - destination.Length, destination);
+    }
+
+    private void EnsureScratch()
+    {
+        if (_scanScratch.Length >= ScanCapacity)
+            return;
+        _scanScratch = new float[ScanCapacity];
+        _scratch = new float[ScanCapacity];
+    }
+
+    /// <summary>Upsamples per-scan values (oldest first) to samples: each scan's value holds until the next scan; 0 before the first.</summary>
+    private void HoldScans(ReadOnlySpan<float> perScan, long firstSample, Span<float> destination)
+    {
+        var scans = perScan.Length;
+        if (scans == 0)
+        {
+            destination.Clear();
+            return;
+        }
+        var sums = perScan;
         var firstScanSlot = TotalScans - scans;
         var k = -1; // Index (in sums) of the last scan taken at or before the current sample.
         for (var i = 0; i < destination.Length; i++)

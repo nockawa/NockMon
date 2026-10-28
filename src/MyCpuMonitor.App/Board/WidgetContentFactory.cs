@@ -17,6 +17,8 @@ public static class WidgetContentFactory
         ValueListWidgetConfig list => new ValueListWidget(list, monitor),
         DriverTableWidgetConfig drivers => new DriverTableWidget(drivers, monitor),
         ProcessEventsWidgetConfig events => new ProcessEventsWidget(events, monitor),
+        ObjectTypesWidgetConfig objects => new ObjectTypesWidget(objects, monitor),
+        GpuEnginesWidgetConfig engines => new GpuEnginesWidget(engines, monitor),
         _ => throw new ArgumentException($"Unknown widget {config.GetType().Name}.", nameof(config)),
     };
 }

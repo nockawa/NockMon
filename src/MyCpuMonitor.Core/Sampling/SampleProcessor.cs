@@ -13,6 +13,7 @@ public sealed class SampleProcessor
 {
     private readonly Dictionary<ProcessKey, Previous> _previous = new();
     private readonly Dictionary<uint, PreviousPoolTag> _previousPoolTags = new();
+    private readonly Dictionary<string, (uint Objects, uint Handles)> _previousObjectTypes = new();
     private RawCore[] _previousCores = [];
     private RawKernel _previousKernel;
     private TimeSpan _previousSystemElapsed;
@@ -49,6 +50,7 @@ public sealed class SampleProcessor
     {
         _previous.Clear();
         _previousPoolTags.Clear();
+        _previousObjectTypes.Clear();
         _hasSystemBaseline = false;
         _hasScanBaseline = false;
     }
@@ -153,6 +155,7 @@ public sealed class SampleProcessor
         }
 
         ProcessPoolTags(raw, output, hadBaseline, seconds);
+        ProcessObjectTypes(raw, output, hadBaseline, seconds);
 
         if (hadBaseline)
         {
@@ -260,6 +263,31 @@ public sealed class SampleProcessor
             if (prev.Generation != _generation)
                 _previousPoolTags.Remove(tag);
         }
+    }
+
+    /// <summary>Object and handle counts per type, growth per minute since the previous scan.</summary>
+    private void ProcessObjectTypes(RawSample raw, ProcessTable output, bool hadBaseline, double seconds)
+    {
+        if (output.ObjectTypes.Length < raw.ObjectTypeCount)
+            output.ObjectTypes = new ObjectTypeStats[raw.ObjectTypeCount];
+        for (var i = 0; i < raw.ObjectTypeCount; i++)
+        {
+            ref readonly var t = ref raw.ObjectTypes[i];
+            ref var prev = ref CollectionsMarshal.GetValueRefOrAddDefault(_previousObjectTypes, t.Name, out var existed);
+            var rates = hadBaseline && existed && seconds > 0;
+            output.ObjectTypes[i] = new ObjectTypeStats
+            {
+                Name = t.Name,
+                Objects = t.Objects,
+                Handles = t.Handles,
+                PeakObjects = t.PeakObjects,
+                PeakHandles = t.PeakHandles,
+                ObjectGrowth = rates ? ((double)t.Objects - prev.Objects) * 60 / seconds : 0,
+                HandleGrowth = rates ? ((double)t.Handles - prev.Handles) * 60 / seconds : 0,
+            };
+            prev = (t.Objects, t.Handles);
+        }
+        output.ObjectTypeCount = raw.ObjectTypeCount;
     }
 
     /// <summary>Pool tags are 4 ASCII characters, little-endian ("File" = 0x656C6946).</summary>

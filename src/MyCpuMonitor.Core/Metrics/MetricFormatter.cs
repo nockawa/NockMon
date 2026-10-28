@@ -25,6 +25,10 @@ public static class MetricFormatter
             MetricUnit.Count => value.ToString("#,0", c),
             MetricUnit.Milliseconds => value.ToString(value < 10 ? "0.###" : "#,0.#", c) + " ms",
             MetricUnit.Megahertz => value.ToString("#,0", c) + " MHz",
+            MetricUnit.Percent => value.ToString(value < 10 ? "0.0" : "0", c) + " %",
+            MetricUnit.Celsius => value.ToString("0", c) + " °C",
+            MetricUnit.Watts => value.ToString(value < 100 ? "0.0" : "0", c) + " W",
+            MetricUnit.Rpm => value.ToString("#,0", c) + " rpm",
             _ => value.ToString(c),
         };
     }
