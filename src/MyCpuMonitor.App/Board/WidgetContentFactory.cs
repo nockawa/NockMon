@@ -15,6 +15,8 @@ public static class WidgetContentFactory
         CpuGridWidgetConfig grid => new CpuGridWidget(grid, monitor),
         PoolTagTableWidgetConfig pool => new PoolTagTableWidget(pool, monitor),
         ValueListWidgetConfig list => new ValueListWidget(list, monitor),
+        DriverTableWidgetConfig drivers => new DriverTableWidget(drivers, monitor),
+        ProcessEventsWidgetConfig events => new ProcessEventsWidget(events, monitor),
         _ => throw new ArgumentException($"Unknown widget {config.GetType().Name}.", nameof(config)),
     };
 }

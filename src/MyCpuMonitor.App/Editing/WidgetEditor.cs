@@ -27,6 +27,8 @@ internal static class WidgetEditor
             CpuGridWidgetConfig g => BuildCpuGrid(panel, g),
             PoolTagTableWidgetConfig p => BuildPoolTags(panel, p),
             ValueListWidgetConfig l => BuildValueList(panel, l, context),
+            DriverTableWidgetConfig d => BuildDrivers(panel, d),
+            ProcessEventsWidgetConfig e => BuildProcessEvents(panel, e),
             _ => throw new ArgumentException($"Unknown widget {clone.GetType().Name}.", nameof(config)),
         };
 
@@ -212,6 +214,44 @@ internal static class WidgetEditor
             config.TopCount = double.IsNaN(top.Value) ? 20 : (int)top.Value;
             config.SortBy = (Core.Sampling.PoolTagField)((ComboBoxItem)sort.SelectedItem).Tag;
             config.Descending = descending.IsOn;
+            return null;
+        };
+    }
+
+    private static Func<string?> BuildDrivers(StackPanel panel, DriverTableWidgetConfig config)
+    {
+        var top = new NumberBox { Header = "Rows", Value = config.TopCount, Minimum = 1, Maximum = 200, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 120 };
+        var sort = new ComboBox { Header = "Sort by", MinWidth = 200 };
+        foreach (var field in Enum.GetValues<Core.Sampling.DriverField>())
+            sort.Items.Add(new ComboBoxItem { Content = field.ToString(), Tag = field });
+        sort.SelectedIndex = (int)config.SortBy;
+        var descending = new ToggleSwitch { Header = "Descending", IsOn = config.Descending };
+        panel.Children.Add(Row(top, sort, descending));
+        return () =>
+        {
+            config.TopCount = double.IsNaN(top.Value) ? 15 : (int)top.Value;
+            config.SortBy = (Core.Sampling.DriverField)((ComboBoxItem)sort.SelectedItem).Tag;
+            config.Descending = descending.IsOn;
+            return null;
+        };
+    }
+
+    private static Func<string?> BuildProcessEvents(StackPanel panel, ProcessEventsWidgetConfig config)
+    {
+        var rows = new NumberBox { Header = "Rows", Value = config.MaxRows, Minimum = 1, Maximum = 500, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 120 };
+        var starts = new ToggleSwitch { Header = "Starts", IsOn = config.ShowStarts };
+        var exits = new ToggleSwitch { Header = "Exits", IsOn = config.ShowExits };
+        var filter = new TextBox { Header = "Filter (name pattern)", Text = config.Filter ?? "", PlaceholderText = "All processes" };
+        panel.Children.Add(Row(rows, starts, exits));
+        panel.Children.Add(filter);
+        return () =>
+        {
+            if (!starts.IsOn && !exits.IsOn)
+                return "Show starts, exits, or both.";
+            config.MaxRows = double.IsNaN(rows.Value) ? 30 : (int)rows.Value;
+            config.ShowStarts = starts.IsOn;
+            config.ShowExits = exits.IsOn;
+            config.Filter = string.IsNullOrWhiteSpace(filter.Text) ? null : filter.Text.Trim();
             return null;
         };
     }

@@ -168,6 +168,62 @@ public sealed class SampleProcessor
         return hadBaseline;
     }
 
+    /// <summary>System-wide event rates over the snapshot's interval (call after a successful <see cref="ProcessSystem"/>).</summary>
+    public static void ApplyEvents(Snapshot output, in Etw.KernelEventTotals t)
+    {
+        var seconds = output.Interval.TotalSeconds;
+        if (seconds <= 0)
+            return;
+        ref var s = ref output.System;
+        s.DiskRead = t.DiskReadBytes / seconds;
+        s.DiskWrite = t.DiskWriteBytes / seconds;
+        s.DiskOps = t.DiskOps / seconds;
+        s.DiskLatencyMs = t.DiskOps > 0 ? t.DiskLatencySumMs / t.DiskOps : 0;
+        s.NetSend = t.NetSendBytes / seconds;
+        s.NetRecv = t.NetRecvBytes / seconds;
+        s.DpcRate = t.DpcCount / seconds;
+        s.IsrRate = t.IsrCount / seconds;
+        s.DpcMaxMs = t.DpcMaxMs;
+        s.IsrMaxMs = t.IsrMaxMs;
+    }
+
+    /// <summary>Per-process disk/network rates and per-driver DPC/ISR stats over the table's interval (after a successful scan).</summary>
+    public static void ApplyScanEvents(ProcessTable table, Dictionary<int, Etw.ProcessIoTotals> processes, List<Etw.DriverTotals> drivers)
+    {
+        var seconds = table.Interval.TotalSeconds;
+        if (seconds <= 0)
+            return;
+        foreach (ref var p in table.Items.AsSpan(0, table.Count))
+        {
+            if (!processes.TryGetValue(p.Pid, out var io))
+            {
+                p.DiskReadBytes = p.DiskWriteBytes = p.DiskOps = p.DiskLatencyMs = p.NetSendBytes = p.NetRecvBytes = 0;
+                continue;
+            }
+            p.DiskReadBytes = io.DiskReadBytes / seconds;
+            p.DiskWriteBytes = io.DiskWriteBytes / seconds;
+            p.DiskOps = io.DiskOps / seconds;
+            p.DiskLatencyMs = io.DiskOps > 0 ? io.DiskLatencySumMs / io.DiskOps : 0;
+            p.NetSendBytes = io.NetSendBytes / seconds;
+            p.NetRecvBytes = io.NetRecvBytes / seconds;
+        }
+
+        table.Drivers.Clear();
+        foreach (var d in drivers)
+        {
+            table.Drivers.Add(new DriverStats
+            {
+                Name = d.Name,
+                DpcTime = d.DpcTimeMs / seconds,
+                DpcRate = d.DpcCount / seconds,
+                DpcMaxMs = d.DpcMaxMs,
+                IsrTime = d.IsrTimeMs / seconds,
+                IsrRate = d.IsrCount / seconds,
+                IsrMaxMs = d.IsrMaxMs,
+            });
+        }
+    }
+
     /// <summary>Pool tags: sizes, growth (bytes/s) and allocation rate since the previous scan. Tag strings are cached.</summary>
     private void ProcessPoolTags(RawSample raw, ProcessTable output, bool hadBaseline, double seconds)
     {

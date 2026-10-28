@@ -202,7 +202,8 @@ public sealed class HistoryStore
         var firstSample = TotalSamples - n;
         UpsampleScans(series.Pattern, field, firstSample, destination);
 
-        if (_watched.TryGetValue(series.Pattern, out var watched))
+        // Fields not available through process handles (ETW disk/network) stay at scan resolution.
+        if (MetricCatalog.IsWatchedField(series.Field) && _watched.TryGetValue(series.Pattern, out var watched))
         {
             var from = (int)Math.Max(0, watched.FirstSample - firstSample);
             if (from < n)

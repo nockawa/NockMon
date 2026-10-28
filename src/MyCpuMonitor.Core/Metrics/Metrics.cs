@@ -56,6 +56,18 @@ public enum ProcessField
     Threads,
     PageFaults,
     HardFaults,
+
+    // Kernel events (ETW), scan rate.
+    DiskRead,
+    DiskWrite,
+    /// <summary>Disk read + write throughput (physical disk, unlike the I/O counters).</summary>
+    DiskBytes,
+    DiskOps,
+    /// <summary>Average disk response time of the process's I/Os.</summary>
+    DiskLatency,
+    NetSend,
+    NetRecv,
+    NetBytes,
 }
 
 public enum SystemMetric
@@ -95,6 +107,19 @@ public enum SystemMetric
     CpuFrequency,
     /// <summary>Threads ready to run but waiting for a CPU.</summary>
     ProcessorQueueLength,
+
+    // Kernel events (ETW).
+    DiskRead,
+    DiskWrite,
+    DiskOps,
+    DiskLatency,
+    NetSend,
+    NetRecv,
+    DpcRate,
+    IsrRate,
+    /// <summary>Longest single DPC in the interval: what causes audio dropouts and stutter.</summary>
+    DpcMax,
+    IsrMax,
 }
 
 public enum CoreMetric
@@ -119,9 +144,13 @@ public static class MetricCatalog
     [
         ProcessField.Cpu, ProcessField.PrivateBytes, ProcessField.WorkingSet, ProcessField.IoOps, ProcessField.IoBytes,
         ProcessField.Handles, ProcessField.Threads, ProcessField.HardFaults, ProcessField.Instances,
+        ProcessField.DiskBytes, ProcessField.NetBytes,
     ];
 
     public static int HistoryIndexOf(ProcessField field) => Array.IndexOf(ProcessHistoryFields, field);
+
+    /// <summary>History fields also sampled at the fast rate for watched processes (handles); the others are scan-rate only.</summary>
+    public static bool IsWatchedField(ProcessField field) => field is not (ProcessField.DiskBytes or ProcessField.NetBytes);
 
     /// <summary>Default table column width in effective pixels.</summary>
     public static double DefaultColumnWidth(ProcessField field) => field switch
@@ -162,6 +191,14 @@ public static class MetricCatalog
         ProcessField.Threads => new("Threads", "Threads", MetricUnit.Count, true),
         ProcessField.PageFaults => new("Page faults", "PF", MetricUnit.PerSecond),
         ProcessField.HardFaults => new("Hard faults", "Hard PF", MetricUnit.PerSecond, true),
+        ProcessField.DiskRead => new("Disk read", "Disk R", MetricUnit.BytesPerSecond),
+        ProcessField.DiskWrite => new("Disk write", "Disk W", MetricUnit.BytesPerSecond),
+        ProcessField.DiskBytes => new("Disk throughput", "Disk", MetricUnit.BytesPerSecond, true),
+        ProcessField.DiskOps => new("Disk IOPS", "IOPS", MetricUnit.PerSecond),
+        ProcessField.DiskLatency => new("Disk latency (avg)", "Disk lat", MetricUnit.Milliseconds),
+        ProcessField.NetSend => new("Network send", "Net ↑", MetricUnit.BytesPerSecond),
+        ProcessField.NetRecv => new("Network receive", "Net ↓", MetricUnit.BytesPerSecond),
+        ProcessField.NetBytes => new("Network throughput", "Net", MetricUnit.BytesPerSecond, true),
         _ => throw new ArgumentOutOfRangeException(nameof(field), field, null),
     };
 
@@ -196,6 +233,16 @@ public static class MetricCatalog
         SystemMetric.TimerResolution => new("Timer resolution", "Timer", MetricUnit.Milliseconds, true),
         SystemMetric.CpuFrequency => new("CPU frequency", "Freq", MetricUnit.Megahertz, true),
         SystemMetric.ProcessorQueueLength => new("Processor queue length", "Queue", MetricUnit.Count, true),
+        SystemMetric.DiskRead => new("Disk read", "Disk R", MetricUnit.BytesPerSecond, true),
+        SystemMetric.DiskWrite => new("Disk write", "Disk W", MetricUnit.BytesPerSecond, true),
+        SystemMetric.DiskOps => new("Disk IOPS", "IOPS", MetricUnit.PerSecond, true),
+        SystemMetric.DiskLatency => new("Disk latency (avg)", "Disk lat", MetricUnit.Milliseconds, true),
+        SystemMetric.NetSend => new("Network send", "Net ↑", MetricUnit.BytesPerSecond, true),
+        SystemMetric.NetRecv => new("Network receive", "Net ↓", MetricUnit.BytesPerSecond, true),
+        SystemMetric.DpcRate => new("DPCs", "DPC/s", MetricUnit.PerSecond, true),
+        SystemMetric.IsrRate => new("ISRs", "ISR/s", MetricUnit.PerSecond, true),
+        SystemMetric.DpcMax => new("Longest DPC", "Max DPC", MetricUnit.Milliseconds, true),
+        SystemMetric.IsrMax => new("Longest ISR", "Max ISR", MetricUnit.Milliseconds, true),
         _ => throw new ArgumentOutOfRangeException(nameof(metric), metric, null),
     };
 

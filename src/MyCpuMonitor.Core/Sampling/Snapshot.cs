@@ -32,6 +32,14 @@ public struct ProcessStats
     public int SessionId;
     public int BasePriority;
 
+    // Kernel events (ETW): physical disk and network, rates over the scan interval.
+    public double DiskReadBytes;
+    public double DiskWriteBytes;
+    public double DiskOps;
+    public double DiskLatencyMs;
+    public double NetSendBytes;
+    public double NetRecvBytes;
+
     public readonly ProcessKey Key => new(Pid, CreateTime);
     public readonly double IoOps => IoReadOps + IoWriteOps + IoOtherOps;
     public readonly double IoBytes => IoReadBytes + IoWriteBytes + IoOtherBytes;
@@ -67,6 +75,49 @@ public struct ProcessStats
         ProcessField.Threads => Threads,
         ProcessField.PageFaults => PageFaults,
         ProcessField.HardFaults => HardFaults,
+        ProcessField.DiskRead => DiskReadBytes,
+        ProcessField.DiskWrite => DiskWriteBytes,
+        ProcessField.DiskBytes => DiskReadBytes + DiskWriteBytes,
+        ProcessField.DiskOps => DiskOps,
+        ProcessField.DiskLatency => DiskLatencyMs,
+        ProcessField.NetSend => NetSendBytes,
+        ProcessField.NetRecv => NetRecvBytes,
+        ProcessField.NetBytes => NetSendBytes + NetRecvBytes,
+        _ => throw new ArgumentOutOfRangeException(nameof(field), field, null),
+    };
+}
+
+public enum DriverField
+{
+    Name,
+    DpcTime,
+    DpcRate,
+    DpcMax,
+    IsrTime,
+    IsrRate,
+    IsrMax,
+}
+
+/// <summary>DPC/ISR activity of one driver over the scan interval. Times in ms per second (1000 = one CPU).</summary>
+public struct DriverStats
+{
+    public string Name;
+    public double DpcTime;
+    public double DpcRate;
+    public double DpcMaxMs;
+    public double IsrTime;
+    public double IsrRate;
+    public double IsrMaxMs;
+
+    public readonly double GetValue(DriverField field) => field switch
+    {
+        DriverField.Name => double.NaN,
+        DriverField.DpcTime => DpcTime,
+        DriverField.DpcRate => DpcRate,
+        DriverField.DpcMax => DpcMaxMs,
+        DriverField.IsrTime => IsrTime,
+        DriverField.IsrRate => IsrRate,
+        DriverField.IsrMax => IsrMaxMs,
         _ => throw new ArgumentOutOfRangeException(nameof(field), field, null),
     };
 }
@@ -126,6 +177,16 @@ public struct SystemStats
     public double TimerResolutionMs;
     public double FrequencyMhz;
     public double ProcessorQueueLength;
+    public double DiskRead;
+    public double DiskWrite;
+    public double DiskOps;
+    public double DiskLatencyMs;
+    public double NetSend;
+    public double NetRecv;
+    public double DpcRate;
+    public double IsrRate;
+    public double DpcMaxMs;
+    public double IsrMaxMs;
 
     public readonly long PhysicalUsed => PhysicalTotal - PhysicalAvailable;
 
@@ -160,6 +221,16 @@ public struct SystemStats
         SystemMetric.TimerResolution => TimerResolutionMs,
         SystemMetric.CpuFrequency => FrequencyMhz,
         SystemMetric.ProcessorQueueLength => ProcessorQueueLength,
+        SystemMetric.DiskRead => DiskRead,
+        SystemMetric.DiskWrite => DiskWrite,
+        SystemMetric.DiskOps => DiskOps,
+        SystemMetric.DiskLatency => DiskLatencyMs,
+        SystemMetric.NetSend => NetSend,
+        SystemMetric.NetRecv => NetRecv,
+        SystemMetric.DpcRate => DpcRate,
+        SystemMetric.IsrRate => IsrRate,
+        SystemMetric.DpcMax => DpcMaxMs,
+        SystemMetric.IsrMax => IsrMaxMs,
         _ => throw new ArgumentOutOfRangeException(nameof(metric), metric, null),
     };
 }
@@ -212,6 +283,9 @@ public sealed class ProcessTable
 {
     public PoolTagStats[] PoolTags = new PoolTagStats[4096];
     public int PoolTagCount;
+
+    /// <summary>Drivers with DPC/ISR activity during the interval (ETW).</summary>
+    public List<DriverStats> Drivers = [];
 
     public ReadOnlySpan<PoolTagStats> PoolTagSpan => PoolTags.AsSpan(0, PoolTagCount);
 

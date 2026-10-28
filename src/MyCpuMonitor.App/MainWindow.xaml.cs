@@ -156,8 +156,15 @@ public sealed partial class MainWindow : Window
         StatusText.Text = string.Create(CultureInfo.CurrentCulture,
             $"{processes} processes · {engine.WatchedProcessCount} watched · {_monitor.LogicalProcessors} CPUs · " +
             $"sample {engine.LastSampleDuration.TotalMilliseconds:0.0} ms / {options.Interval.TotalMilliseconds:0} ms · " +
-            $"scan {engine.LastScanDuration.TotalMilliseconds:0.0} ms / {(options.Interval * options.ScanEvery).TotalSeconds:0.#} s");
+            $"scan {engine.LastScanDuration.TotalMilliseconds:0.0} ms / {(options.Interval * options.ScanEvery).TotalSeconds:0.#} s · {EtwStatus(engine)}");
     }
+
+    private static string EtwStatus(Core.Sampling.SamplingEngine engine) => engine.KernelEvents switch
+    {
+        { Status: null, EventsLost: > 0 } events => $"ETW on ({events.EventsLost:N0} events lost)",
+        { Status: null } => "ETW on",
+        _ => "ETW off",
+    };
 
     // --- Tray, visibility, always on top, compact mode --------------------------------------------
 

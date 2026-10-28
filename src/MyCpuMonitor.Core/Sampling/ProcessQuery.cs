@@ -87,6 +87,13 @@ public sealed class ProcessQuery
         ref var s = ref row.Stats;
         row.Instances++;
         s.CreateTime = Math.Min(s.CreateTime, p.CreateTime);
+        var ops = s.DiskOps + p.DiskOps;
+        s.DiskLatencyMs = ops > 0 ? (s.DiskLatencyMs * s.DiskOps + p.DiskLatencyMs * p.DiskOps) / ops : 0; // Weighted by I/Os.
+        s.DiskOps = ops;
+        s.DiskReadBytes += p.DiskReadBytes;
+        s.DiskWriteBytes += p.DiskWriteBytes;
+        s.NetSendBytes += p.NetSendBytes;
+        s.NetRecvBytes += p.NetRecvBytes;
         s.Cpu += p.Cpu;
         s.CpuUser += p.CpuUser;
         s.CpuKernel += p.CpuKernel;

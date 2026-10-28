@@ -46,11 +46,16 @@ public sealed class SamplingEngine : IDisposable
     private string[]? _pendingPatterns;
     private Thread? _thread;
     private volatile bool _stopping;
+    private readonly Etw.IKernelEventSource? _events;
+    private readonly Dictionary<int, Etw.ProcessIoTotals> _scanIo = new();
+    private readonly List<Etw.DriverTotals> _scanDrivers = [];
 
-    public SamplingEngine(ISystemProbe probe, SamplingOptions options)
+    /// <param name="events">Optional kernel event stream (ETW) for disk, network and DPC/ISR metrics. Not owned.</param>
+    public SamplingEngine(ISystemProbe probe, SamplingOptions options, Etw.IKernelEventSource? events = null)
     {
         options.Validate();
         _probe = probe;
+        _events = events;
         _watched = new WatchedProcessTracker(probe);
         _options = options;
         _history = CreateHistory();
@@ -65,6 +70,9 @@ public sealed class SamplingEngine : IDisposable
     public event Action<Exception>? SampleFailed;
 
     public int LogicalProcessorCount => _probe.LogicalProcessorCount;
+
+    /// <summary>Kernel event stream, if any (status, process event log).</summary>
+    public Etw.IKernelEventSource? KernelEvents => _events;
 
     public SamplingOptions Options
     {
@@ -154,6 +162,12 @@ public sealed class SamplingEngine : IDisposable
                 var scanStart = Stopwatch.GetTimestamp();
                 _probe.CollectProcesses(_raw);
                 scanned = _processor.ProcessScan(_raw, _spareTable);
+                if (_events is not null)
+                {
+                    _events.HarvestScan(_scanIo, _scanDrivers);
+                    if (scanned)
+                        SampleProcessor.ApplyScanEvents(_spareTable, _scanIo, _scanDrivers);
+                }
                 _watched.OnScan(_raw, scanned ? _spareTable : null);
                 _samplesUntilScan = Options.ScanEvery;
                 LastScanDuration = Stopwatch.GetElapsedTime(scanStart);
@@ -163,8 +177,11 @@ public sealed class SamplingEngine : IDisposable
             _watched.Tick();
             WatchedProcessCount = _watched.WatchedCount;
 
+            Etw.KernelEventTotals events = default;
+            _events?.HarvestSample(out events);
             if (!_processor.ProcessSystem(_raw, _back))
                 return false;
+            SampleProcessor.ApplyEvents(_back, in events);
 
             lock (_lock)
             {

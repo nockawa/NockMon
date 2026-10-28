@@ -88,6 +88,8 @@ public readonly record struct GridRect(int Column, int Row, int ColumnSpan, int 
 [JsonDerivedType(typeof(CpuGridWidgetConfig), "cpuGrid")]
 [JsonDerivedType(typeof(PoolTagTableWidgetConfig), "poolTags")]
 [JsonDerivedType(typeof(ValueListWidgetConfig), "valueList")]
+[JsonDerivedType(typeof(DriverTableWidgetConfig), "drivers")]
+[JsonDerivedType(typeof(ProcessEventsWidgetConfig), "processEvents")]
 public abstract class WidgetConfig
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -164,6 +166,25 @@ public sealed class PoolTagTableWidgetConfig : WidgetConfig
     public int TopCount { get; set; } = 20;
     public Sampling.PoolTagField SortBy { get; set; } = Sampling.PoolTagField.NonPagedBytes;
     public bool Descending { get; set; } = true;
+}
+
+/// <summary>DPC/ISR activity per driver (ETW): which driver burns CPU in interrupts and which causes latency spikes.</summary>
+public sealed class DriverTableWidgetConfig : WidgetConfig
+{
+    public int TopCount { get; set; } = 15;
+    public Sampling.DriverField SortBy { get; set; } = Sampling.DriverField.DpcTime;
+    public bool Descending { get; set; } = true;
+}
+
+/// <summary>Recent process starts and exits (ETW), newest first.</summary>
+public sealed class ProcessEventsWidgetConfig : WidgetConfig
+{
+    public int MaxRows { get; set; } = 30;
+    public bool ShowStarts { get; set; } = true;
+    public bool ShowExits { get; set; } = true;
+
+    /// <summary>Optional name pattern.</summary>
+    public string? Filter { get; set; }
 }
 
 /// <summary>Label/value rows for a list of series (e.g. a kernel overview).</summary>

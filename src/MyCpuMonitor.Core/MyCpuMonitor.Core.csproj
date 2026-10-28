@@ -13,4 +13,8 @@
     <InternalsVisibleTo Include="MyCpuMonitor.Core.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.0" />
+  </ItemGroup>
+
 </Project>
