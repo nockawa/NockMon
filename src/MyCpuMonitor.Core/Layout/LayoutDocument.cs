@@ -86,6 +86,8 @@ public readonly record struct GridRect(int Column, int Row, int ColumnSpan, int 
 [JsonDerivedType(typeof(ChartWidgetConfig), "chart")]
 [JsonDerivedType(typeof(ValueWidgetConfig), "value")]
 [JsonDerivedType(typeof(CpuGridWidgetConfig), "cpuGrid")]
+[JsonDerivedType(typeof(PoolTagTableWidgetConfig), "poolTags")]
+[JsonDerivedType(typeof(ValueListWidgetConfig), "valueList")]
 public abstract class WidgetConfig
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -154,6 +156,42 @@ public sealed class CpuGridWidgetConfig : WidgetConfig
 
     /// <summary>Grid columns; 0 = automatic (cells kept close to <see cref="GridArrangement.DefaultAspect"/>).</summary>
     public int Columns { get; set; }
+}
+
+/// <summary>Kernel pool usage by tag, top N (driver leak hunting).</summary>
+public sealed class PoolTagTableWidgetConfig : WidgetConfig
+{
+    public int TopCount { get; set; } = 20;
+    public Sampling.PoolTagField SortBy { get; set; } = Sampling.PoolTagField.NonPagedBytes;
+    public bool Descending { get; set; } = true;
+}
+
+/// <summary>Label/value rows for a list of series (e.g. a kernel overview).</summary>
+public sealed class ValueListWidgetConfig : WidgetConfig
+{
+    public List<SeriesRef> Items { get; set; } = [];
+
+    public static List<SeriesRef> KernelOverview() =>
+    [
+        new SystemSeries(SystemMetric.ContextSwitches),
+        new SystemSeries(SystemMetric.SystemCalls),
+        new SystemSeries(SystemMetric.Interrupts),
+        new SystemSeries(SystemMetric.CpuDpc),
+        new SystemSeries(SystemMetric.CpuInterrupt),
+        new SystemSeries(SystemMetric.ProcessorQueueLength),
+        new SystemSeries(SystemMetric.CpuFrequency),
+        new SystemSeries(SystemMetric.TimerResolution),
+        new SystemSeries(SystemMetric.PageFaults),
+        new SystemSeries(SystemMetric.PageReads),
+        new SystemSeries(SystemMetric.MemoryStandby),
+        new SystemSeries(SystemMetric.MemoryModified),
+        new SystemSeries(SystemMetric.MemoryFree),
+        new SystemSeries(SystemMetric.MemoryZeroed),
+        new SystemSeries(SystemMetric.KernelPaged),
+        new SystemSeries(SystemMetric.KernelNonPaged),
+        new SystemSeries(SystemMetric.Handles),
+        new SystemSeries(SystemMetric.Threads),
+    ];
 }
 
 /// <summary>Single value with sparkline.</summary>

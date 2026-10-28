@@ -4,12 +4,13 @@ namespace MyCpuMonitor.Core.Layout;
 
 public static class LayoutPatterns
 {
-    /// <summary>Process name patterns used by a layout's charts and value widgets (to be sampled at the fast rate).</summary>
+    /// <summary>Process name patterns used by a layout's charts, values and value lists (to be sampled at the fast rate).</summary>
     public static IEnumerable<string> Watched(LayoutDocument layout) => layout.Widgets
         .SelectMany(w => w switch
         {
             ChartWidgetConfig c => c.Series.Select(s => s.Source),
             ValueWidgetConfig v => [v.Source],
+            ValueListWidgetConfig l => l.Items,
             _ => [],
         })
         .OfType<ProcessSeries>()

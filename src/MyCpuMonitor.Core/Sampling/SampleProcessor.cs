@@ -12,7 +12,9 @@ namespace MyCpuMonitor.Core.Sampling;
 public sealed class SampleProcessor
 {
     private readonly Dictionary<ProcessKey, Previous> _previous = new();
+    private readonly Dictionary<uint, PreviousPoolTag> _previousPoolTags = new();
     private RawCore[] _previousCores = [];
+    private RawKernel _previousKernel;
     private TimeSpan _previousSystemElapsed;
     private TimeSpan _previousScanElapsed;
     private bool _hasSystemBaseline;
@@ -34,9 +36,19 @@ public sealed class SampleProcessor
         public long Generation;
     }
 
+    private struct PreviousPoolTag
+    {
+        public string Name;
+        public long PagedUsed;
+        public long NonPagedUsed;
+        public uint Allocs;
+        public long Generation;
+    }
+
     public void Reset()
     {
         _previous.Clear();
+        _previousPoolTags.Clear();
         _hasSystemBaseline = false;
         _hasScanBaseline = false;
     }
@@ -53,7 +65,7 @@ public sealed class SampleProcessor
         if (hadBaseline)
         {
             ComputeCores(raw, output, dt.TotalSeconds);
-            ComputeSystem(raw, output);
+            ComputeSystem(raw, output, dt.TotalSeconds);
             output.WallTimeUtc = raw.WallTimeUtc;
             output.Interval = dt;
             output.LogicalProcessors = raw.Cores.Length;
@@ -62,6 +74,7 @@ public sealed class SampleProcessor
         if (_previousCores.Length != raw.Cores.Length)
             _previousCores = new RawCore[raw.Cores.Length];
         raw.Cores.CopyTo(_previousCores, 0);
+        _previousKernel = raw.Kernel;
         _previousSystemElapsed = raw.Elapsed;
         _hasSystemBaseline = true;
         return hadBaseline;
@@ -139,6 +152,8 @@ public sealed class SampleProcessor
                 _previous.Remove(key);
         }
 
+        ProcessPoolTags(raw, output, hadBaseline, seconds);
+
         if (hadBaseline)
         {
             output.Count = raw.ProcessCount;
@@ -146,14 +161,64 @@ public sealed class SampleProcessor
             output.WallTimeUtc = raw.WallTimeUtc;
             output.IoOps = ioOps;
             output.IoBytes = ioBytes;
+            output.ReadyThreads = raw.ReadyThreads;
         }
         _previousScanElapsed = raw.ProcessesElapsed;
         _hasScanBaseline = true;
         return hadBaseline;
     }
 
+    /// <summary>Pool tags: sizes, growth (bytes/s) and allocation rate since the previous scan. Tag strings are cached.</summary>
+    private void ProcessPoolTags(RawSample raw, ProcessTable output, bool hadBaseline, double seconds)
+    {
+        if (output.PoolTags.Length < raw.PoolTagCount)
+            output.PoolTags = new PoolTagStats[raw.PoolTagCount + raw.PoolTagCount / 4];
+
+        for (var i = 0; i < raw.PoolTagCount; i++)
+        {
+            ref readonly var t = ref raw.PoolTags[i];
+            ref var prev = ref CollectionsMarshal.GetValueRefOrAddDefault(_previousPoolTags, t.Tag, out var existed);
+            prev.Name ??= TagName(t.Tag);
+            var allocs = unchecked(t.PagedAllocs + t.NonPagedAllocs);
+            var frees = unchecked(t.PagedFrees + t.NonPagedFrees);
+
+            ref var s = ref output.PoolTags[i];
+            s.Tag = prev.Name;
+            s.NonPagedBytes = t.NonPagedUsed;
+            s.PagedBytes = t.PagedUsed;
+            s.Outstanding = unchecked((int)(allocs - frees));
+            var rates = hadBaseline && existed && seconds > 0;
+            s.NonPagedGrowth = rates ? (t.NonPagedUsed - prev.NonPagedUsed) / seconds : 0;
+            s.PagedGrowth = rates ? (t.PagedUsed - prev.PagedUsed) / seconds : 0;
+            s.AllocationRate = rates ? unchecked(allocs - prev.Allocs) / seconds : 0;
+
+            prev.PagedUsed = t.PagedUsed;
+            prev.NonPagedUsed = t.NonPagedUsed;
+            prev.Allocs = allocs;
+            prev.Generation = _generation;
+        }
+        output.PoolTagCount = raw.PoolTagCount;
+
+        foreach (var (tag, prev) in _previousPoolTags)
+        {
+            if (prev.Generation != _generation)
+                _previousPoolTags.Remove(tag);
+        }
+    }
+
+    /// <summary>Pool tags are 4 ASCII characters, little-endian ("File" = 0x656C6946).</summary>
+    internal static string TagName(uint tag) => string.Create(4, tag, static (span, t) =>
+    {
+        for (var i = 0; i < 4; i++)
+        {
+            var c = (char)((t >> (8 * i)) & 0xFF);
+            span[i] = c is >= ' ' and <= '~' ? c : '.';
+        }
+    });
+
     private void ComputeCores(RawSample raw, Snapshot output, double seconds)
     {
+        var nominal = raw.Kernel.NominalMhz;
         if (output.Cores.Length != raw.Cores.Length)
             output.Cores = new CoreStats[raw.Cores.Length];
 
@@ -166,9 +231,11 @@ public sealed class SampleProcessor
             var user = Delta(c.UserTime, p.UserTime);
             var total = kernel + user;
             ref var s = ref output.Cores[i];
+            s.FrequencyMhz = Frequency(nominal, c.PerformancePercent);
             if (total <= 0)
             {
                 s = default;
+                s.FrequencyMhz = Frequency(nominal, c.PerformancePercent);
                 continue;
             }
             s.Usage = Clamp01((total - idle) / total);
@@ -180,10 +247,14 @@ public sealed class SampleProcessor
         }
     }
 
-    private static void ComputeSystem(RawSample raw, Snapshot output)
+    /// <summary>Effective MHz = nominal × % processor performance; 0 when PDH is unavailable.</summary>
+    private static double Frequency(double nominalMhz, double performancePercent) =>
+        double.IsFinite(nominalMhz) && double.IsFinite(performancePercent) ? nominalMhz * performancePercent / 100 : 0;
+
+    private void ComputeSystem(RawSample raw, Snapshot output, double seconds)
     {
         ref var s = ref output.System;
-        s.Cpu = s.CpuUser = s.CpuKernel = s.CpuDpc = s.CpuInterrupt = 0;
+        s.Cpu = s.CpuUser = s.CpuKernel = s.CpuDpc = s.CpuInterrupt = s.Interrupts = 0;
         foreach (ref readonly var c in output.Cores.AsSpan())
         {
             s.Cpu += c.Usage;
@@ -191,7 +262,17 @@ public sealed class SampleProcessor
             s.CpuKernel += c.Kernel;
             s.CpuDpc += c.Dpc;
             s.CpuInterrupt += c.Interrupt;
+            s.Interrupts += c.InterruptRate;
         }
+
+        ref readonly var k = ref raw.Kernel;
+        ref readonly var pk = ref _previousKernel;
+        s.ContextSwitches = Delta(k.ContextSwitches, pk.ContextSwitches) / seconds;
+        s.SystemCalls = Delta(k.SystemCalls, pk.SystemCalls) / seconds;
+        s.PageFaults = Delta(k.PageFaults, pk.PageFaults) / seconds;
+        s.PageReads = Delta(k.PageReads, pk.PageReads) / seconds;
+        s.TimerResolutionMs = k.TimerResolution / 10_000.0;
+        s.FrequencyMhz = Frequency(k.NominalMhz, k.PerformancePercent);
         ref readonly var m = ref raw.Memory;
         s.PhysicalTotal = m.PhysicalTotal;
         s.PhysicalAvailable = m.PhysicalAvailable;
@@ -203,6 +284,10 @@ public sealed class SampleProcessor
         s.Processes = m.Processes;
         s.Threads = m.Threads;
         s.Handles = m.Handles;
+        s.MemoryZeroed = Math.Max(0, m.Zeroed);
+        s.MemoryFree = Math.Max(0, m.Free);
+        s.MemoryStandby = Math.Max(0, m.Standby);
+        s.MemoryModified = Math.Max(0, m.Modified);
     }
 
     /// <summary>Cumulative counters never decrease for a given process; clamp defensively.</summary>

@@ -23,6 +23,8 @@ public static class MetricFormatter
             MetricUnit.BytesPerSecond => FormatBytes(value) + "/s",
             MetricUnit.PerSecond => value.ToString(value < 10 && value != 0 ? "0.0" : "#,0", c) + "/s",
             MetricUnit.Count => value.ToString("#,0", c),
+            MetricUnit.Milliseconds => value.ToString(value < 10 ? "0.###" : "#,0.#", c) + " ms",
+            MetricUnit.Megahertz => value.ToString("#,0", c) + " MHz",
             _ => value.ToString(c),
         };
     }

@@ -8,6 +8,8 @@ public enum WidgetKind
     Chart,
     Value,
     CpuGrid,
+    PoolTags,
+    ValueList,
 }
 
 /// <summary>Widget kinds the user can add, with their default and minimum sizes in cells.</summary>
@@ -21,6 +23,8 @@ public static class WidgetCatalog
         ChartWidgetConfig => WidgetKind.Chart,
         ValueWidgetConfig => WidgetKind.Value,
         CpuGridWidgetConfig => WidgetKind.CpuGrid,
+        PoolTagTableWidgetConfig => WidgetKind.PoolTags,
+        ValueListWidgetConfig => WidgetKind.ValueList,
         _ => throw new ArgumentException($"Unknown widget {config.GetType().Name}.", nameof(config)),
     };
 
@@ -30,6 +34,8 @@ public static class WidgetCatalog
         WidgetKind.Chart => "Chart",
         WidgetKind.Value => "Value",
         WidgetKind.CpuGrid => "Per-CPU graphs",
+        WidgetKind.PoolTags => "Kernel pool tags",
+        WidgetKind.ValueList => "Value list",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
@@ -39,6 +45,8 @@ public static class WidgetCatalog
         WidgetKind.Chart => new(6, 3),
         WidgetKind.Value => new(2, 2),
         WidgetKind.CpuGrid => new(8, 4),
+        WidgetKind.PoolTags => new(7, 6),
+        WidgetKind.ValueList => new(4, 7),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
@@ -48,6 +56,8 @@ public static class WidgetCatalog
         WidgetKind.Chart => new(2, 1),
         WidgetKind.Value => new(1, 1),
         WidgetKind.CpuGrid => new(2, 2),
+        WidgetKind.PoolTags => new(3, 2),
+        WidgetKind.ValueList => new(2, 1),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
@@ -65,6 +75,8 @@ public static class WidgetCatalog
         },
         WidgetKind.Value => new ValueWidgetConfig { Title = "CPU", Bounds = bounds, Source = new SystemSeries(SystemMetric.Cpu) },
         WidgetKind.CpuGrid => new CpuGridWidgetConfig { Title = "CPUs", Bounds = bounds },
+        WidgetKind.PoolTags => new PoolTagTableWidgetConfig { Title = "Kernel pool", Bounds = bounds },
+        WidgetKind.ValueList => new ValueListWidgetConfig { Title = "Kernel", Bounds = bounds, Items = ValueListWidgetConfig.KernelOverview() },
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 }

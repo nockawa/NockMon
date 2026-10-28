@@ -38,6 +38,9 @@ public struct RawCore
     public long DpcTime;
     public long InterruptTime;
     public uint InterruptCount;
+
+    /// <summary>Effective/nominal frequency in % (PDH "% Processor Performance"); NaN when unavailable.</summary>
+    public double PerformancePercent;
 }
 
 /// <summary>Sizes in bytes.</summary>
@@ -53,6 +56,40 @@ public struct RawMemory
     public int Handles;
     public int Processes;
     public int Threads;
+
+    /// <summary>Memory lists (bytes); -1 when unavailable (missing privilege).</summary>
+    public long Zeroed;
+    public long Free;
+    public long Standby;
+    public long Modified;
+}
+
+/// <summary>Kernel-wide counters. Cumulative counts are 32-bit and wrap.</summary>
+public struct RawKernel
+{
+    public uint ContextSwitches;
+    public uint SystemCalls;
+    public uint PageFaults;
+    public uint PageReads;
+
+    /// <summary>Current global timer resolution, 100 ns units.</summary>
+    public uint TimerResolution;
+
+    /// <summary>Average "% processor performance" and nominal MHz; NaN when unavailable.</summary>
+    public double PerformancePercent;
+    public double NominalMhz;
+}
+
+/// <summary>One pool tag's cumulative counters (scan rate).</summary>
+public struct RawPoolTag
+{
+    public uint Tag;
+    public uint PagedAllocs;
+    public uint PagedFrees;
+    public long PagedUsed;
+    public uint NonPagedAllocs;
+    public uint NonPagedFrees;
+    public long NonPagedUsed;
 }
 
 /// <summary>One probe read. Reused across ticks: arrays only grow.</summary>
@@ -66,8 +103,16 @@ public sealed class RawSample
     public TimeSpan ProcessesElapsed;
     public RawProcess[] Processes = new RawProcess[512];
     public int ProcessCount;
+
+    /// <summary>Threads in the Ready state at the scan (waiting for a CPU: the processor queue).</summary>
+    public int ReadyThreads;
     public RawCore[] Cores = [];
     public RawMemory Memory;
+    public RawKernel Kernel;
+
+    /// <summary>Pool tags (scan rate, with the processes).</summary>
+    public RawPoolTag[] PoolTags = new RawPoolTag[4096];
+    public int PoolTagCount;
 
     public void EnsureProcessCapacity(int count)
     {

@@ -83,6 +83,7 @@ internal sealed class FakeProbe(int cores, params Func<RawSample>[] steps) : ISy
         sample.EnsureProcessCapacity(_current.ProcessCount);
         Array.Copy(_current.Processes, sample.Processes, _current.ProcessCount);
         sample.ProcessCount = _current.ProcessCount;
+        sample.ReadyThreads = _current.ReadyThreads;
     }
 
     public bool TryOpenProcess(ProcessKey key, out nint handle)

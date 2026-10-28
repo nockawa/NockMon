@@ -10,6 +10,8 @@ public enum MetricUnit
     PerSecond,
     Count,
     Timestamp,
+    Milliseconds,
+    Megahertz,
 }
 
 /// <summary>How CPU values are displayed. Stored values are always in logical CPUs used.</summary>
@@ -75,6 +77,24 @@ public enum SystemMetric
     Handles,
     IoOps,
     IoBytes,
+
+    // Kernel (appended: history slots are indexed by value).
+    ContextSwitches,
+    SystemCalls,
+    Interrupts,
+    PageFaults,
+    /// <summary>Pages read from disk to resolve hard faults.</summary>
+    PageReads,
+    MemoryZeroed,
+    MemoryFree,
+    MemoryStandby,
+    MemoryModified,
+    /// <summary>Global timer resolution (raised by apps calling timeBeginPeriod: costs power).</summary>
+    TimerResolution,
+    /// <summary>Effective frequency averaged over all CPUs.</summary>
+    CpuFrequency,
+    /// <summary>Threads ready to run but waiting for a CPU.</summary>
+    ProcessorQueueLength,
 }
 
 public enum CoreMetric
@@ -86,6 +106,8 @@ public enum CoreMetric
     Dpc,
     Interrupt,
     InterruptRate,
+    /// <summary>Effective frequency (nominal × % processor performance).</summary>
+    Frequency,
 }
 
 public readonly record struct MetricInfo(string DisplayName, string ShortName, MetricUnit Unit, bool HasHistory = false);
@@ -162,6 +184,18 @@ public static class MetricCatalog
         SystemMetric.Handles => new("Handles", "Handles", MetricUnit.Count, true),
         SystemMetric.IoOps => new("I/O operations", "I/O ops", MetricUnit.PerSecond, true),
         SystemMetric.IoBytes => new("I/O throughput", "I/O", MetricUnit.BytesPerSecond, true),
+        SystemMetric.ContextSwitches => new("Context switches", "Ctx sw", MetricUnit.PerSecond, true),
+        SystemMetric.SystemCalls => new("System calls", "Syscalls", MetricUnit.PerSecond, true),
+        SystemMetric.Interrupts => new("Interrupts", "Int", MetricUnit.PerSecond, true),
+        SystemMetric.PageFaults => new("Page faults", "PF", MetricUnit.PerSecond, true),
+        SystemMetric.PageReads => new("Hard fault page reads", "Page reads", MetricUnit.PerSecond, true),
+        SystemMetric.MemoryZeroed => new("Zeroed memory", "Zeroed", MetricUnit.Bytes, true),
+        SystemMetric.MemoryFree => new("Free memory", "Free", MetricUnit.Bytes, true),
+        SystemMetric.MemoryStandby => new("Standby memory (cache)", "Standby", MetricUnit.Bytes, true),
+        SystemMetric.MemoryModified => new("Modified memory", "Modified", MetricUnit.Bytes, true),
+        SystemMetric.TimerResolution => new("Timer resolution", "Timer", MetricUnit.Milliseconds, true),
+        SystemMetric.CpuFrequency => new("CPU frequency", "Freq", MetricUnit.Megahertz, true),
+        SystemMetric.ProcessorQueueLength => new("Processor queue length", "Queue", MetricUnit.Count, true),
         _ => throw new ArgumentOutOfRangeException(nameof(metric), metric, null),
     };
 
@@ -173,6 +207,7 @@ public static class MetricCatalog
         CoreMetric.Dpc => new("Core DPC time", "DPC", MetricUnit.Cpu, true),
         CoreMetric.Interrupt => new("Core interrupt time", "ISR", MetricUnit.Cpu, true),
         CoreMetric.InterruptRate => new("Core interrupts", "Int/s", MetricUnit.PerSecond, true),
+        CoreMetric.Frequency => new("Core frequency", "Freq", MetricUnit.Megahertz, true),
         _ => throw new ArgumentOutOfRangeException(nameof(metric), metric, null),
     };
 }

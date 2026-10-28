@@ -25,6 +25,8 @@ internal static class WidgetEditor
             ChartWidgetConfig c => BuildChart(panel, c, context),
             ValueWidgetConfig v => BuildValue(panel, v, context),
             CpuGridWidgetConfig g => BuildCpuGrid(panel, g),
+            PoolTagTableWidgetConfig p => BuildPoolTags(panel, p),
+            ValueListWidgetConfig l => BuildValueList(panel, l, context),
             _ => throw new ArgumentException($"Unknown widget {clone.GetType().Name}.", nameof(config)),
         };
 
@@ -192,6 +194,74 @@ internal static class WidgetEditor
             config.ShowKernel = kernel.IsOn;
             config.WindowSeconds = (int)((ComboBoxItem)window.SelectedItem).Tag;
             config.Columns = double.IsNaN(columns.Value) ? 0 : (int)columns.Value;
+            return null;
+        };
+    }
+
+    private static Func<string?> BuildPoolTags(StackPanel panel, PoolTagTableWidgetConfig config)
+    {
+        var top = new NumberBox { Header = "Rows", Value = config.TopCount, Minimum = 1, Maximum = 500, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 120 };
+        var sort = new ComboBox { Header = "Sort by", MinWidth = 200 };
+        foreach (var field in Enum.GetValues<Core.Sampling.PoolTagField>())
+            sort.Items.Add(new ComboBoxItem { Content = field.ToString(), Tag = field });
+        sort.SelectedIndex = (int)config.SortBy;
+        var descending = new ToggleSwitch { Header = "Descending", IsOn = config.Descending };
+        panel.Children.Add(Row(top, sort, descending));
+        return () =>
+        {
+            config.TopCount = double.IsNaN(top.Value) ? 20 : (int)top.Value;
+            config.SortBy = (Core.Sampling.PoolTagField)((ComboBoxItem)sort.SelectedItem).Tag;
+            config.Descending = descending.IsOn;
+            return null;
+        };
+    }
+
+    private static Func<string?> BuildValueList(StackPanel panel, ValueListWidgetConfig config, EditorContext context)
+    {
+        var list = new StackPanel { Spacing = 8 };
+        var editors = new List<SeriesEditor>();
+
+        void AddEditor(SeriesRef source)
+        {
+            var editor = new SeriesEditor(source, null, null, context, showLabelAndColor: false);
+            var remove = new Button { Content = new FontIcon { Glyph = "", FontSize = 12 }, VerticalAlignment = VerticalAlignment.Bottom };
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { editor, remove } };
+            remove.Click += (_, _) =>
+            {
+                editors.Remove(editor);
+                list.Children.Remove(row);
+            };
+            editors.Add(editor);
+            list.Children.Add(row);
+        }
+
+        void Fill(IEnumerable<SeriesRef> items)
+        {
+            editors.Clear();
+            list.Children.Clear();
+            foreach (var item in items)
+                AddEditor(item);
+        }
+
+        Fill(config.Items);
+        var add = new Button { Content = "Add value" };
+        add.Click += (_, _) => AddEditor(new SystemSeries(SystemMetric.Cpu));
+        var reset = new Button { Content = "Reset to kernel overview" };
+        reset.Click += (_, _) => Fill(ValueListWidgetConfig.KernelOverview());
+        panel.Children.Add(list);
+        panel.Children.Add(Row(add, reset));
+
+        return () =>
+        {
+            var items = new List<SeriesRef>();
+            foreach (var editor in editors)
+            {
+                var source = editor.Build(out var error);
+                if (source is null)
+                    return error;
+                items.Add(source);
+            }
+            config.Items = items;
             return null;
         };
     }

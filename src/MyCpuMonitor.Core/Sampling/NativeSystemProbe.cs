@@ -41,7 +41,19 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
         _coreBuffer = (SystemProcessorPerformanceInformation*)NativeMemory.Alloc(
             (nuint)(maxPerGroup * sizeof(SystemProcessorPerformanceInformation)));
         Grow(1 << 20);
+        _poolLength = 256 * 1024;
+        _poolBuffer = (byte*)NativeMemory.Alloc(_poolLength);
+        _cpuPerformance = new double[LogicalProcessorCount];
+        _counters = new ProcessorPerformanceCounters(LogicalProcessorCount);
+        // Memory lists need this privilege (held by elevated tokens, disabled by default).
+        _memoryListsAvailable = AdvApi32.EnablePrivilege("SeProfileSingleProcessPrivilege");
     }
+
+    private readonly ProcessorPerformanceCounters _counters;
+    private readonly double[] _cpuPerformance;
+    private readonly bool _memoryListsAvailable;
+    private byte* _poolBuffer;
+    private uint _poolLength;
 
     public int LogicalProcessorCount { get; }
 
@@ -54,6 +66,82 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
         sample.WallTimeUtc = DateTime.UtcNow;
         CollectCores(sample);
         CollectMemory(sample);
+        CollectKernel(sample);
+    }
+
+    private void CollectKernel(RawSample sample)
+    {
+        ref var k = ref sample.Kernel;
+        SystemPerformanceInformation perf;
+        uint returned;
+        if (NtDll.NtQuerySystemInformation(NtDll.SystemPerformanceInformation, &perf, (uint)sizeof(SystemPerformanceInformation), &returned) >= 0)
+        {
+            k.ContextSwitches = perf.ContextSwitches;
+            k.SystemCalls = perf.SystemCalls;
+            k.PageFaults = perf.PageFaultCount;
+            k.PageReads = perf.PageReadCount;
+        }
+
+        uint maximum, minimum, current;
+        if (NtDll.NtQueryTimerResolution(&maximum, &minimum, &current) >= 0)
+            k.TimerResolution = current;
+
+        k.PerformancePercent = _counters.Collect(_cpuPerformance);
+        k.NominalMhz = _counters.NominalMhz;
+        for (var i = 0; i < sample.Cores.Length; i++)
+            sample.Cores[i].PerformancePercent = _cpuPerformance[i];
+
+        ref var m = ref sample.Memory;
+        m.Zeroed = m.Free = m.Standby = m.Modified = -1;
+        SystemMemoryListInformation lists;
+        if (_memoryListsAvailable && NtDll.NtQuerySystemInformation(NtDll.SystemMemoryListInformation, &lists, (uint)sizeof(SystemMemoryListInformation), &returned) >= 0)
+        {
+            ulong standby = 0;
+            for (var i = 0; i < 8; i++)
+                standby += lists.PageCountByPriority[i];
+            long page = Environment.SystemPageSize;
+            m.Zeroed = (long)lists.ZeroPageCount * page;
+            m.Free = (long)lists.FreePageCount * page;
+            m.Standby = (long)standby * page;
+            m.Modified = (long)lists.ModifiedPageCount * page;
+        }
+    }
+
+    private void CollectPoolTags(RawSample sample)
+    {
+        uint required;
+        int status;
+        while ((status = NtDll.NtQuerySystemInformation(NtDll.SystemPoolTagInformation, _poolBuffer, _poolLength, &required)) == NtDll.STATUS_INFO_LENGTH_MISMATCH)
+        {
+            NativeMemory.Free(_poolBuffer);
+            _poolLength = Math.Max(required + required / 4, _poolLength * 2);
+            _poolBuffer = (byte*)NativeMemory.Alloc(_poolLength);
+        }
+        if (status < 0)
+        {
+            sample.PoolTagCount = 0;
+            return;
+        }
+
+        var count = (int)*(uint*)_poolBuffer;
+        if (sample.PoolTags.Length < count)
+            sample.PoolTags = new RawPoolTag[count + count / 4];
+        var tags = (SystemPoolTag*)(_poolBuffer + 8);
+        for (var i = 0; i < count; i++)
+        {
+            ref readonly var t = ref tags[i];
+            sample.PoolTags[i] = new RawPoolTag
+            {
+                Tag = t.Tag,
+                PagedAllocs = t.PagedAllocs,
+                PagedFrees = t.PagedFrees,
+                PagedUsed = (long)t.PagedUsed,
+                NonPagedAllocs = t.NonPagedAllocs,
+                NonPagedFrees = t.NonPagedFrees,
+                NonPagedUsed = (long)t.NonPagedUsed,
+            };
+        }
+        sample.PoolTagCount = count;
     }
 
     public bool TryOpenProcess(ProcessKey key, out nint handle)
@@ -115,6 +203,7 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
     {
         ObjectDisposedException.ThrowIf(_buffer == null, this);
         sample.ProcessesElapsed = Now;
+        CollectPoolTags(sample);
         while (true)
         {
             uint required;
@@ -132,10 +221,18 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
 
         _generation++;
         var count = 0;
+        var ready = 0;
         var entry = _buffer;
         while (true)
         {
             ref readonly var spi = ref *(SystemProcessInformation*)entry;
+            // SYSTEM_THREAD_INFORMATION records (80 bytes) follow; ThreadState at +68, Ready = 1.
+            var threads = entry + sizeof(SystemProcessInformation);
+            for (var t = 0; t < spi.NumberOfThreads; t++)
+            {
+                if (*(uint*)(threads + t * 80 + 68) == 1)
+                    ready++;
+            }
             sample.EnsureProcessCapacity(count + 1);
             ref var p = ref sample.Processes[count++];
             p.Pid = (int)spi.UniqueProcessId;
@@ -168,6 +265,7 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
             entry += spi.NextEntryOffset;
         }
         sample.ProcessCount = count;
+        sample.ReadyThreads = ready;
 
         foreach (var (key, name) in _names)
         {
@@ -250,7 +348,10 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
     {
         NativeMemory.Free(_buffer);
         NativeMemory.Free(_coreBuffer);
+        NativeMemory.Free(_poolBuffer);
         _buffer = null;
         _coreBuffer = null;
+        _poolBuffer = null;
+        _counters.Dispose();
     }
 }

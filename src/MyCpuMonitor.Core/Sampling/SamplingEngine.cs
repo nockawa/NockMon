@@ -178,6 +178,7 @@ public sealed class SamplingEngine : IDisposable
                 _back.Table = _currentTable;
                 _back.System.IoOps = _currentTable.IoOps;
                 _back.System.IoBytes = _currentTable.IoBytes;
+                _back.System.ProcessorQueueLength = _currentTable.ReadyThreads;
 
                 if (_history.CoreCount != _back.Cores.Length)
                     _history = new HistoryStore(_history.Capacity, _history.ScanCapacity, _back.Cores.Length);

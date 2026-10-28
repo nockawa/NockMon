@@ -80,6 +80,7 @@ public struct CoreStats
     public double Dpc;
     public double Interrupt;
     public double InterruptRate;
+    public double FrequencyMhz;
 
     public readonly double GetValue(CoreMetric metric) => metric switch
     {
@@ -89,6 +90,7 @@ public struct CoreStats
         CoreMetric.Dpc => Dpc,
         CoreMetric.Interrupt => Interrupt,
         CoreMetric.InterruptRate => InterruptRate,
+        CoreMetric.Frequency => FrequencyMhz,
         _ => throw new ArgumentOutOfRangeException(nameof(metric), metric, null),
     };
 }
@@ -112,6 +114,18 @@ public struct SystemStats
     public int Handles;
     public double IoOps;
     public double IoBytes;
+    public double ContextSwitches;
+    public double SystemCalls;
+    public double Interrupts;
+    public double PageFaults;
+    public double PageReads;
+    public long MemoryZeroed;
+    public long MemoryFree;
+    public long MemoryStandby;
+    public long MemoryModified;
+    public double TimerResolutionMs;
+    public double FrequencyMhz;
+    public double ProcessorQueueLength;
 
     public readonly long PhysicalUsed => PhysicalTotal - PhysicalAvailable;
 
@@ -134,13 +148,73 @@ public struct SystemStats
         SystemMetric.Handles => Handles,
         SystemMetric.IoOps => IoOps,
         SystemMetric.IoBytes => IoBytes,
+        SystemMetric.ContextSwitches => ContextSwitches,
+        SystemMetric.SystemCalls => SystemCalls,
+        SystemMetric.Interrupts => Interrupts,
+        SystemMetric.PageFaults => PageFaults,
+        SystemMetric.PageReads => PageReads,
+        SystemMetric.MemoryZeroed => MemoryZeroed,
+        SystemMetric.MemoryFree => MemoryFree,
+        SystemMetric.MemoryStandby => MemoryStandby,
+        SystemMetric.MemoryModified => MemoryModified,
+        SystemMetric.TimerResolution => TimerResolutionMs,
+        SystemMetric.CpuFrequency => FrequencyMhz,
+        SystemMetric.ProcessorQueueLength => ProcessorQueueLength,
         _ => throw new ArgumentOutOfRangeException(nameof(metric), metric, null),
     };
 }
 
-/// <summary>Result of one full process scan. Produced at the scan rate, double-buffered independently of <see cref="Snapshot"/>.</summary>
+public enum PoolTagField
+{
+    Tag,
+    NonPagedBytes,
+    PagedBytes,
+    TotalBytes,
+    /// <summary>Bytes per second (positive: growing).</summary>
+    NonPagedGrowth,
+    PagedGrowth,
+    /// <summary>Allocations per second (paged + non-paged).</summary>
+    AllocationRate,
+    /// <summary>Allocations not freed (paged + non-paged).</summary>
+    Outstanding,
+}
+
+/// <summary>Kernel pool usage by tag (scan rate). Growth that never comes back down is the signature of a driver leak.</summary>
+public struct PoolTagStats
+{
+    public string Tag;
+    public long NonPagedBytes;
+    public long PagedBytes;
+    public double NonPagedGrowth;
+    public double PagedGrowth;
+    public double AllocationRate;
+    public long Outstanding;
+
+    public readonly double GetValue(PoolTagField field) => field switch
+    {
+        PoolTagField.Tag => double.NaN,
+        PoolTagField.NonPagedBytes => NonPagedBytes,
+        PoolTagField.PagedBytes => PagedBytes,
+        PoolTagField.TotalBytes => NonPagedBytes + PagedBytes,
+        PoolTagField.NonPagedGrowth => NonPagedGrowth,
+        PoolTagField.PagedGrowth => PagedGrowth,
+        PoolTagField.AllocationRate => AllocationRate,
+        PoolTagField.Outstanding => Outstanding,
+        _ => throw new ArgumentOutOfRangeException(nameof(field), field, null),
+    };
+}
+
+/// <summary>
+/// Result of one full scan (processes and pool tags). Produced at the scan rate, double-buffered independently of
+/// <see cref="Snapshot"/>.
+/// </summary>
 public sealed class ProcessTable
 {
+    public PoolTagStats[] PoolTags = new PoolTagStats[4096];
+    public int PoolTagCount;
+
+    public ReadOnlySpan<PoolTagStats> PoolTagSpan => PoolTags.AsSpan(0, PoolTagCount);
+
     /// <summary>History scan index of this table, -1 before the first one.</summary>
     public long ScanIndex = -1;
     public DateTime WallTimeUtc;
@@ -154,6 +228,9 @@ public sealed class ProcessTable
     /// <summary>Sum of all processes' I/O rates.</summary>
     public double IoOps;
     public double IoBytes;
+
+    /// <summary>Threads ready to run, waiting for a CPU, at scan time.</summary>
+    public int ReadyThreads;
 
     public ReadOnlySpan<ProcessStats> Span => Items.AsSpan(0, Count);
 }
