@@ -225,7 +225,7 @@ public sealed partial class MainWindow : Window
 
     private void OnClosing(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
     {
-        _session.Settings.Window = WindowPlacement.Capture(_hwnd) ?? _session.Settings.Window;
+        SavePlacement();
         _session.SaveSettings();
         if (_exiting || !_session.Settings.CloseToTray)
             return;
@@ -295,11 +295,25 @@ public sealed partial class MainWindow : Window
         _session.SaveSettings();
     }
 
-    /// <summary>Compact: no toolbar, no title bar (border kept for resizing), the board drags the window.</summary>
+    /// <summary>Records the window placement of the current mode (normal and compact each keep their own).</summary>
+    private void SavePlacement()
+    {
+        var settings = _session.Settings;
+        if (_compact)
+            settings.CompactWindow = WindowPlacement.Capture(_hwnd) ?? settings.CompactWindow;
+        else
+            settings.Window = WindowPlacement.Capture(_hwnd) ?? settings.Window;
+    }
+
+    /// <summary>
+    /// Compact: no toolbar, no title bar (border kept for resizing), the board drags the window. Each mode restores its
+    /// own placement; the first time in compact mode, the window keeps its place.
+    /// </summary>
     private void SetCompact(bool compact)
     {
-        if (_session.IsEditing)
+        if (_session.IsEditing || compact == _compact)
             return;
+        SavePlacement();
         _compact = compact;
         Toolbar.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         Info.IsOpen = false;
@@ -310,6 +324,9 @@ public sealed partial class MainWindow : Window
         // reset it, leaving the content under the restored title bar. Reset it explicitly.
         if (!compact)
             AppWindow.TitleBar.ExtendsContentIntoTitleBar = false;
+        // After the chrome change: the placement is the outer rectangle, restored as recorded in that mode.
+        WindowPlacement.TryRestore(_hwnd, compact ? _session.Settings.CompactWindow : _session.Settings.Window);
+        _session.SaveSettings();
     }
 
     private void OnBoardDoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)

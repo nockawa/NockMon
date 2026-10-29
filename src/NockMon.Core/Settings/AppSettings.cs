@@ -50,8 +50,14 @@ public sealed class AppSettings
     /// <summary>Agents may read process command lines (they can carry secrets: tokens, paths). Off by default.</summary>
     public bool AgentCommandLines { get; set; }
 
-    /// <summary>Main window placement at last close; null = default size.</summary>
+    /// <summary>Agents may change layouts, through an edit session the user reviews (Done/Cancel). Off by default.</summary>
+    public bool AgentLayoutChanges { get; set; }
+
+    /// <summary>Main window placement in normal mode (at last close or when entering compact mode); null = default size.</summary>
     public WindowPlacementSettings? Window { get; set; }
+
+    /// <summary>Main window placement in compact mode (when leaving it, or at close); null = keep the normal one.</summary>
+    public WindowPlacementSettings? CompactWindow { get; set; }
 
     /// <summary>Sampling options from these settings, clamped to valid values.</summary>
     [JsonIgnore]

@@ -29,6 +29,13 @@ public sealed class LayoutSession
     /// <summary>Raised when <see cref="Current"/> is replaced by another document.</summary>
     public event Action? CurrentChanged;
 
+    /// <summary>Raised when an edit session ends: true if committed (saved), false if cancelled.</summary>
+    public event Action<bool>? EditEnded;
+
+    /// <summary>A layout by name without switching to it; the current one includes its pending edits.</summary>
+    public LayoutDocument Peek(string name) =>
+        string.Equals(name, Current.Name, StringComparison.OrdinalIgnoreCase) ? Current : _store.Load(name);
+
     public IReadOnlyList<string> Names => _store.List();
 
     public void SaveSettings() => _settingsStore.Save(Settings);
@@ -79,6 +86,19 @@ public sealed class LayoutSession
         SetCurrent(LoadInitial());
     }
 
+    /// <summary>Deletes a layout by name (the current one: see <see cref="Delete()"/>).</summary>
+    public void Delete(string name)
+    {
+        if (string.Equals(name, Current.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            Delete();
+            return;
+        }
+        EnsureNotEditing();
+        if (!_store.Delete(name))
+            throw new InvalidOperationException($"Layout '{name}' not found.");
+    }
+
     /// <summary>
     /// Persists a change made outside an edit session (e.g. sorting a table by clicking its header).
     /// During an edit session the change is part of the session: saved on commit, reverted on cancel.
@@ -100,6 +120,7 @@ public sealed class LayoutSession
         EnsureEditing();
         _store.Save(Current);
         _editBackup = null;
+        EditEnded?.Invoke(true);
     }
 
     public void CancelEdit()
@@ -109,6 +130,7 @@ public sealed class LayoutSession
         _editBackup = null;
         Current = backup;
         CurrentChanged?.Invoke();
+        EditEnded?.Invoke(false);
     }
 
     public static LayoutDocument Clone(LayoutDocument layout) => LayoutStore.Deserialize(LayoutStore.Serialize(layout));

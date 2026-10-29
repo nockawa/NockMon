@@ -29,6 +29,13 @@ public sealed class LayoutStore(string directory)
         (T)JsonSerializer.Deserialize(JsonSerializer.Serialize<WidgetConfig>(widget, MonitorJsonContext.Default.WidgetConfig),
             MonitorJsonContext.Default.WidgetConfig)!;
 
+    /// <summary>A widget in the layout file format (camelCase, enums as names, "$type" discriminator).</summary>
+    public static string SerializeWidget(WidgetConfig widget) => JsonSerializer.Serialize(widget, MonitorJsonContext.Default.WidgetConfig);
+
+    /// <exception cref="JsonException">Invalid JSON or unknown "$type".</exception>
+    public static WidgetConfig DeserializeWidget(string json) =>
+        JsonSerializer.Deserialize(json, MonitorJsonContext.Default.WidgetConfig) ?? throw new JsonException("Empty widget.");
+
     /// <summary>Names of the readable layouts, sorted. Unreadable files are skipped.</summary>
     public IReadOnlyList<string> List()
     {

@@ -15,13 +15,15 @@ public sealed class AgentAccess : IDisposable
     private readonly DispatcherQueue _dispatcher;
     private readonly AgentPipeServer _server;
 
-    public AgentAccess(LayoutSession session, SamplingEngine engine, DispatcherQueue dispatcher)
+    /// <param name="layoutHost">The window, for the layout tools (called on the UI thread).</param>
+    public AgentAccess(LayoutSession session, SamplingEngine engine, DispatcherQueue dispatcher, ILayoutHost layoutHost)
     {
         _session = session;
         _dispatcher = dispatcher;
         var queries = new MonitorQueries(engine, () => _session.Settings.AgentCommandLines);
+        var layouts = new LayoutTools(new LayoutAgent(session, layoutHost), new UiDispatcher(dispatcher));
         var version = Plugins.PluginRuntime.HostVersion.ToString(3);
-        _server = new AgentPipeServer(() => new MonitorTools(queries).CreateServerOptions(version));
+        _server = new AgentPipeServer(() => new MonitorTools(queries).CreateServerOptions(version, layouts));
         _server.SessionsChanged += () => _dispatcher.TryEnqueue(() => Changed?.Invoke());
         Apply();
     }
@@ -52,6 +54,17 @@ public sealed class AgentAccess : IDisposable
         }
     }
 
+    /// <summary>Agents may change layouts (through an edit session the user reviews).</summary>
+    public bool AllowLayoutChanges
+    {
+        get => _session.Settings.AgentLayoutChanges;
+        set
+        {
+            _session.Settings.AgentLayoutChanges = value;
+            _session.SaveSettings();
+        }
+    }
+
     public IReadOnlyList<string> Clients => _server.Clients;
 
     /// <summary>Why the server is not running although enabled (pipe name taken), or null.</summary>
@@ -67,4 +80,28 @@ public sealed class AgentAccess : IDisposable
     }
 
     public void Dispose() => _server.Dispose();
+
+    /// <summary>Runs agent work on the UI thread (inline when already on it).</summary>
+    private sealed class UiDispatcher(DispatcherQueue queue) : IUiDispatcher
+    {
+        public Task<T> InvokeAsync<T>(Func<T> action)
+        {
+            if (queue.HasThreadAccess)
+                return Task.FromResult(action());
+            var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!queue.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        done.SetResult(action());
+                    }
+                    catch (Exception e)
+                    {
+                        done.SetException(e);
+                    }
+                }))
+                done.SetException(new InvalidOperationException("NockMon is shutting down."));
+            return done.Task;
+        }
+    }
 }
