@@ -33,8 +33,17 @@
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
   </ItemGroup>
 
+  <!-- Fluent UI System Icons (MIT, Microsoft): tab icons. The font ships as a file; the name map is embedded. -->
+  <ItemGroup>
+    <Content Include="Assets\Icons\FluentSystemIcons-Regular.ttf" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\Icons\LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <EmbeddedResource Include="Assets\Icons\fluent-icons.txt" LogicalName="FluentIcons.txt" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\MyCpuMonitor.Core\MyCpuMonitor.Core.csproj" />
+    <!-- RID-agnostic library: without the per-RID publish folder, the launcher's parallel win-x64/win-arm64 publishes build it once. -->
+    <ProjectReference Include="..\MyCpuMonitor.Sdk\MyCpuMonitor.Sdk.csproj" GlobalPropertiesToRemove="PublishDir" />
   </ItemGroup>
 
   <!-- Unpackaged publish omits the project .pri (compiled XAML + resources); the MSIX tooling only ships it in packages. -->

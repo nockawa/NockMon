@@ -3,6 +3,7 @@
     <Project Path="src/MyCpuMonitor.App/MyCpuMonitor.App.csproj" />
     <Project Path="src/MyCpuMonitor.Core/MyCpuMonitor.Core.csproj" />
     <Project Path="src/MyCpuMonitor.Launcher/MyCpuMonitor.Launcher.csproj" />
+    <Project Path="src/MyCpuMonitor.Sdk/MyCpuMonitor.Sdk.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/MyCpuMonitor.Core.Tests/MyCpuMonitor.Core.Tests.csproj" />

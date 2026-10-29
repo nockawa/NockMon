@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using MyCpuMonitor.Core.Layout;
+using Windows.Foundation;
 
 namespace MyCpuMonitor.Board;
 
@@ -39,6 +40,9 @@ public sealed partial class BoardView : UserControl
 
         /// <summary>Widget under the pointer during a move: the drop stacks onto it.</summary>
         public WidgetConfig? StackTarget;
+
+        /// <summary>Tab under the pointer during a move: the drop moves the widget to that page.</summary>
+        public int? PageTarget;
     }
 
     public BoardView()
@@ -63,6 +67,15 @@ public sealed partial class BoardView : UserControl
 
     /// <summary>Raised when the user asks to move a stack's shown item out of it.</summary>
     internal event Action<StackWidgetConfig>? UnstackRequested;
+
+    /// <summary>During a widget move: the page whose tab is under a window point, or null (tab rail drop target).</summary>
+    internal Func<Point, int?>? PageDropTarget { get; set; }
+
+    /// <summary>The tab a moved widget is over changed (null: none).</summary>
+    internal event Action<int?>? PageDropHover;
+
+    /// <summary>A widget was dropped onto a tab: move it to that page. The board is rebuilt by the handler on success.</summary>
+    internal event Action<WidgetConfig, int>? MoveToPageRequested;
 
     /// <summary>Pulls fresh data into every widget.</summary>
     public void RefreshWidgets()
@@ -239,6 +252,16 @@ public sealed partial class BoardView : UserControl
             Canvas.SetLeft(host, origin.X + dx);
             Canvas.SetTop(host, origin.Y + dy);
 
+            var page = PageDropTarget?.Invoke(Surface.TransformToVisual(null).TransformPoint(new Point(host.DragStart.X + dx, host.DragStart.Y + dy)));
+            if (page != _drag.PageTarget)
+                PageDropHover?.Invoke(page);
+            _drag.PageTarget = page;
+            if (page is not null)
+            {
+                Preview.Visibility = Visibility.Collapsed;
+                return;
+            }
+
             if (HostAt(host.DragStart.X + dx, host.DragStart.Y + dy, host) is { } target)
             {
                 _drag.StackTarget = target.Config;
@@ -265,6 +288,20 @@ public sealed partial class BoardView : UserControl
     {
         if (_drag?.Host != host)
             return;
+
+        if (_drag.PageTarget is { } targetPage)
+        {
+            _drag = null;
+            PageDropHover?.Invoke(null);
+            Preview.Visibility = Visibility.Collapsed;
+            MoveToPageRequested?.Invoke(host.Config, targetPage);
+            if (_hosts.Contains(host)) // Refused (no room there): back to its place.
+            {
+                Canvas.SetZIndex(host, 0);
+                Place(host, host.Config.Bounds);
+            }
+            return;
+        }
 
         if (_drag.StackTarget is { } target && _drag.IsValid && _layout is not null)
         {

@@ -15,15 +15,21 @@ public static class SmallMultiples
 {
     private const float Gap = 3;
 
-    private static readonly CanvasTextFormat LabelFormat = new() { FontSize = 10, FontFamily = "Segoe UI", WordWrapping = CanvasWordWrapping.NoWrap };
-    private static readonly CanvasTextFormat ValueFormat = new()
+    private static readonly CanvasTextFormat LabelFormat = Format(bold: false, right: false);
+    private static readonly CanvasTextFormat ValueFormat = Format(bold: false, right: true);
+    private static readonly CanvasTextFormat BoldLabelFormat = Format(bold: true, right: false);
+    private static readonly CanvasTextFormat BoldValueFormat = Format(bold: true, right: true);
+
+    private static CanvasTextFormat Format(bool bold, bool right) => new()
     {
-        FontSize = 10, FontFamily = "Segoe UI", WordWrapping = CanvasWordWrapping.NoWrap, HorizontalAlignment = CanvasHorizontalAlignment.Right,
+        FontSize = 10, FontFamily = "Segoe UI", WordWrapping = CanvasWordWrapping.NoWrap,
+        FontWeight = bold ? Microsoft.UI.Text.FontWeights.Bold : Microsoft.UI.Text.FontWeights.Normal,
+        HorizontalAlignment = right ? CanvasHorizontalAlignment.Right : CanvasHorizontalAlignment.Left,
     };
 
     public static void Draw(CanvasDrawingSession ds, Size size, IReadOnlyList<SeriesData> cells, IReadOnlyList<SeriesData>? overlay,
         int windowSamples, double yMax, int fixedColumns, Color fill, Color overlayFill, ElementTheme theme, Func<SeriesData, string> formatValue,
-        Color? stroke = null, Color? overlayStroke = null)
+        Color? stroke = null, Color? overlayStroke = null, bool boldText = false)
     {
         var (columns, rows) = GridArrangement.Arrange(cells.Count, size.Width, size.Height, fixedColumns);
         if (columns == 0)
@@ -52,8 +58,8 @@ public static class SmallMultiples
 
             if (showText)
             {
-                ds.DrawText(series.Label, new Rect(x + 3, y + 1, cellWidth * 0.65, 14), subtle, LabelFormat);
-                ds.DrawText(formatValue(series), new Rect(x, y + 1, cellWidth - 3, 14), text, ValueFormat);
+                ds.DrawText(series.Label, new Rect(x + 3, y + 1, cellWidth * 0.65, 14), subtle, boldText ? BoldLabelFormat : LabelFormat);
+                ds.DrawText(formatValue(series), new Rect(x, y + 1, cellWidth - 3, 14), text, boldText ? BoldValueFormat : ValueFormat);
             }
         }
     }

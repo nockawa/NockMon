@@ -18,7 +18,7 @@ internal static class WidgetEditor
     {
         var clone = LayoutStore.Clone(config);
         var panel = new StackPanel { Spacing = 12, MinWidth = 480 };
-        var about = Docs.Of(WidgetCatalog.KindOf(clone));
+        var about = Docs.Of(clone);
         panel.Children.Add(new Expander
         {
             Header = new TextBlock { Text = about.Summary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) },
@@ -40,6 +40,7 @@ internal static class WidgetEditor
             DriverTableWidgetConfig d => BuildDrivers(panel, d),
             ProcessEventsWidgetConfig e => BuildProcessEvents(panel, e),
             GpuEnginesWidgetConfig g => BuildGpuEngines(panel, g, context),
+            PluginWidgetConfig p => BuildPlugin(panel, p),
             ObjectTypesWidgetConfig o => BuildSortedTable(panel, o.TopCount, o.SortBy, o.Descending, Docs.Of,
                 (top, sort, desc) => (o.TopCount, o.SortBy, o.Descending) = (top, sort, desc)),
             _ => throw new ArgumentException($"Unknown widget {clone.GetType().Name}.", nameof(config)),
@@ -51,7 +52,7 @@ internal static class WidgetEditor
         var dialog = new ContentDialog
         {
             XamlRoot = root,
-            Title = $"Configure {WidgetCatalog.DisplayName(WidgetCatalog.KindOf(clone)).ToLowerInvariant()}",
+            Title = $"Configure {(clone is PluginWidgetConfig ? WidgetCatalog.DisplayName(clone) : WidgetCatalog.DisplayName(clone).ToLowerInvariant())}",
             Content = new ScrollViewer { Content = panel, MaxHeight = 640, Padding = new Thickness(0, 0, 16, 0) },
             PrimaryButtonText = "Apply",
             CloseButtonText = "Cancel",
@@ -380,6 +381,39 @@ internal static class WidgetEditor
             }
             config.Items = items;
             return null;
+        };
+    }
+
+    /// <summary>The plugin's own settings editor, if it has one; its errors are contained like the widget's.</summary>
+    private static Func<string?> BuildPlugin(StackPanel panel, PluginWidgetConfig config)
+    {
+        if (Plugins.PluginRuntime.Find(config.Plugin, config.Widget) is not { } plugin)
+        {
+            panel.Children.Add(new TextBlock { Text = $"Plugin '{config.Plugin}' is not loaded: its settings are kept as they are.", TextWrapping = TextWrapping.Wrap, Opacity = 0.7 });
+            return () => null;
+        }
+        Sdk.IPluginSettingsEditor? editor;
+        try
+        {
+            editor = plugin.CreateSettingsEditor(new Plugins.PluginWidgetContext(config, saved: null));
+        }
+        catch (Exception e)
+        {
+            panel.Children.Add(new InfoBar { Severity = InfoBarSeverity.Error, IsClosable = false, IsOpen = true, Title = "Plugin settings", Message = e.Message });
+            return () => null;
+        }
+        if (editor is not null)
+            panel.Children.Add(editor.View);
+        return () =>
+        {
+            try
+            {
+                return editor?.Apply();
+            }
+            catch (Exception e)
+            {
+                return $"Plugin settings: {e.Message}";
+            }
         };
     }
 

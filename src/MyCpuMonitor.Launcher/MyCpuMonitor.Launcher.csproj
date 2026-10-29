@@ -32,7 +32,7 @@
     <MSBuild Projects="$(_AppProject)" Targets="Restore" RemoveProperties="TargetFramework"
              Properties="RuntimeIdentifier=$(RuntimeIdentifier);_Restore=1" />
     <MSBuild Projects="$(_AppProject)" Targets="Publish" RemoveProperties="TargetFramework"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=false;PublishDir=$([System.IO.Path]::GetFullPath('$(_AppPublishDir)'))" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=false;Version=$(Version);PublishDir=$([System.IO.Path]::GetFullPath('$(_AppPublishDir)'))" />
     <ItemGroup>
       <_AppPayload Include="$(_AppPublishDir)**\*" />
       <ResolvedFileToPublish Include="@(_AppPayload)"

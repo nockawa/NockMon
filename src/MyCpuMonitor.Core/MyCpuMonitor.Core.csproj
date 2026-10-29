@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.0" />
+    <PackageReference Include="NuGet.Versioning" Version="7.9.0" />
   </ItemGroup>
 
 </Project>

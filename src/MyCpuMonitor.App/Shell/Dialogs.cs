@@ -6,9 +6,9 @@ namespace MyCpuMonitor.Shell;
 internal static class Dialogs
 {
     /// <returns>The trimmed name, or null if cancelled.</returns>
-    public static async Task<string?> PromptNameAsync(XamlRoot root, string title, string initial, string primary)
+    public static async Task<string?> PromptNameAsync(XamlRoot root, string title, string initial, string primary, string placeholder = "Layout name")
     {
-        var box = new TextBox { Text = initial, PlaceholderText = "Layout name", MinWidth = 300 };
+        var box = new TextBox { Text = initial, PlaceholderText = placeholder, MinWidth = 300 };
         box.SelectAll();
         var dialog = new ContentDialog
         {

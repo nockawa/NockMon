@@ -74,7 +74,7 @@ public sealed partial class CpuGridWidget : UserControl, IMonitorWidget
     {
         var isFraction = MetricCatalog.Get(_config.Metric).Unit == MetricUnit.Cpu;
         SmallMultiples.Draw(args.DrawingSession, new Windows.Foundation.Size(sender.ActualWidth, sender.ActualHeight), _main, _kernel.Length > 0 ? _kernel : null, _windowSamples,
-            isFraction ? 1.0 : SharedMax(), _config.Columns, MainFill, KernelFill, ActualTheme, s => FormatValue(s, isFraction), MainStroke, KernelStroke);
+            isFraction ? 1.0 : SharedMax(), _config.Columns, MainFill, KernelFill, ActualTheme, s => FormatValue(s, isFraction), MainStroke, KernelStroke, boldText: true);
     }
 
     private string FormatValue(SeriesData series, bool isFraction)

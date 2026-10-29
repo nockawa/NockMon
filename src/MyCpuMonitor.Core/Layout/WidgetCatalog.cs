@@ -17,13 +17,16 @@ public enum WidgetKind
 
     /// <summary>Created by dropping a widget onto another, not from the add menu.</summary>
     Stack,
+
+    /// <summary>Provided by a plugin (<see cref="PluginCatalog"/>); listed separately in the add menu.</summary>
+    Plugin,
 }
 
 /// <summary>Widget kinds the user can add, with their default and minimum sizes in cells.</summary>
 public static class WidgetCatalog
 {
     /// <summary>Kinds offered by the add menu.</summary>
-    public static IReadOnlyList<WidgetKind> Kinds { get; } = Enum.GetValues<WidgetKind>().Where(k => k != WidgetKind.Stack).ToArray();
+    public static IReadOnlyList<WidgetKind> Kinds { get; } = Enum.GetValues<WidgetKind>().Where(k => k is not (WidgetKind.Stack or WidgetKind.Plugin)).ToArray();
 
     public static WidgetKind KindOf(WidgetConfig config) => config switch
     {
@@ -38,6 +41,7 @@ public static class WidgetCatalog
         ObjectTypesWidgetConfig => WidgetKind.ObjectTypes,
         GpuEnginesWidgetConfig => WidgetKind.GpuEngines,
         StackWidgetConfig => WidgetKind.Stack,
+        PluginWidgetConfig => WidgetKind.Plugin,
         _ => throw new ArgumentException($"Unknown widget {config.GetType().Name}.", nameof(config)),
     };
 
@@ -54,6 +58,7 @@ public static class WidgetCatalog
         WidgetKind.ObjectTypes => "Kernel objects",
         WidgetKind.GpuEngines => "GPU engines",
         WidgetKind.Stack => "Stack",
+        WidgetKind.Plugin => "Plugin widget",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
@@ -70,6 +75,7 @@ public static class WidgetCatalog
         WidgetKind.ObjectTypes => new(8, 6),
         WidgetKind.GpuEngines => new(8, 4),
         WidgetKind.Stack => new(1, 1),
+        WidgetKind.Plugin => new(4, 3),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
@@ -86,12 +92,30 @@ public static class WidgetCatalog
         WidgetKind.ObjectTypes => new(3, 2),
         WidgetKind.GpuEngines => new(2, 2),
         WidgetKind.Stack => new(1, 1),
+        WidgetKind.Plugin => new(1, 1),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
+
+    /// <summary>Name of a widget's kind; for a plugin widget, the plugin's name for it.</summary>
+    public static string DisplayName(WidgetConfig config) =>
+        config is PluginWidgetConfig plugin
+            ? PluginCatalog.Find(plugin)?.DisplayName ?? plugin.Widget
+            : DisplayName(KindOf(config));
+
+    /// <summary>New plugin widget at <paramref name="bounds"/>, with the widget's name as title.</summary>
+    public static PluginWidgetConfig Create(PluginWidgetInfo widget, GridRect bounds) => new()
+    {
+        Plugin = widget.Plugin,
+        Widget = widget.Widget,
+        Title = widget.DisplayName,
+        Bounds = bounds,
     };
 
     /// <summary>Minimum size of a widget; for a stack, the largest minimum of its items on each axis.</summary>
     public static GridSize MinSize(WidgetConfig config)
     {
+        if (config is PluginWidgetConfig plugin)
+            return PluginCatalog.Find(plugin)?.MinSize ?? MinSize(WidgetKind.Plugin); // Missing plugin: its placeholder.
         if (config is not StackWidgetConfig stack)
             return MinSize(KindOf(config));
         int columns = 1, rows = 1;

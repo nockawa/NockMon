@@ -1,17 +1,50 @@
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using MyCpuMonitor.Core.Metrics;
 
 namespace MyCpuMonitor.Core.Layout;
 
-/// <summary>A named arrangement of widgets on the board. Persisted as JSON.</summary>
+/// <summary>
+/// A named set of pages (tabs) of widgets. Persisted as JSON. One page: no tab rail. Every page's data is sampled
+/// (switching back shows what was missed); only the shown page is drawn.
+/// </summary>
 public sealed class LayoutDocument
 {
     public const int CurrentSchemaVersion = 1;
 
+    private List<LayoutPage> _pages = [new()];
+    private int _activePage;
+
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public required string Name { get; set; }
     public BoardConfig Board { get; set; } = new();
-    public List<WidgetConfig> Widgets { get; set; } = [];
+
+    /// <summary>At least one page (an empty list read from a file becomes one empty page).</summary>
+    public List<LayoutPage> Pages
+    {
+        get => _pages;
+        set => _pages = value is { Count: > 0 } ? value : [new LayoutPage()];
+    }
+
+    /// <summary>Index of the page shown (remembered per layout). Clamped when read: JSON may set it before the pages.</summary>
+    public int ActivePage
+    {
+        get => Math.Clamp(_activePage, 0, _pages.Count - 1);
+        set => _activePage = value;
+    }
+
+    [JsonIgnore] public LayoutPage CurrentPage => _pages[ActivePage];
+
+    /// <summary>The shown page's widgets: what the board, editing and placement work on.</summary>
+    [JsonIgnore]
+    public List<WidgetConfig> Widgets
+    {
+        get => CurrentPage.Widgets;
+        set => CurrentPage.Widgets = value;
+    }
+
+    /// <summary>Widgets of every page, stacks not expanded.</summary>
+    [JsonIgnore] public IEnumerable<WidgetConfig> AllWidgets => _pages.SelectMany(p => p.Widgets);
 
     /// <summary>Pairs of widgets whose bounds overlap.</summary>
     public IEnumerable<(WidgetConfig A, WidgetConfig B)> FindCollisions()
@@ -50,6 +83,17 @@ public sealed class LayoutDocument
             },
         ],
     };
+}
+
+/// <summary>A tab of a layout: its widgets, a name (tooltip) and an icon (Fluent UI System Icons name).</summary>
+public sealed class LayoutPage
+{
+    public const string DefaultIcon = "board";
+
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Name { get; set; } = "Main";
+    public string Icon { get; set; } = DefaultIcon;
+    public List<WidgetConfig> Widgets { get; set; } = [];
 }
 
 public enum BoardOverflow
@@ -93,6 +137,7 @@ public readonly record struct GridRect(int Column, int Row, int ColumnSpan, int 
 [JsonDerivedType(typeof(ObjectTypesWidgetConfig), "objectTypes")]
 [JsonDerivedType(typeof(GpuEnginesWidgetConfig), "gpuEngines")]
 [JsonDerivedType(typeof(StackWidgetConfig), "stack")]
+[JsonDerivedType(typeof(PluginWidgetConfig), "plugin")]
 public abstract class WidgetConfig
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -215,6 +260,17 @@ public sealed class StackWidgetConfig : WidgetConfig
     /// <summary>The widgets of <paramref name="widgets"/>, with stacks replaced by their items.</summary>
     public static IEnumerable<WidgetConfig> Leaves(IEnumerable<WidgetConfig> widgets) =>
         widgets.SelectMany(w => w is StackWidgetConfig s ? s.Items : [w]);
+}
+
+/// <summary>
+/// A widget provided by a plugin (<see cref="Plugin"/> package id, <see cref="Widget"/> id within it). Its settings are
+/// the plugin's, kept as JSON: a layout survives the plugin being missing, and works again once it is installed.
+/// </summary>
+public sealed class PluginWidgetConfig : WidgetConfig
+{
+    public required string Plugin { get; set; }
+    public required string Widget { get; set; }
+    public JsonObject? Settings { get; set; }
 }
 
 /// <summary>Kernel objects per type: counts, handles, growth. Objects without handles are held by the kernel.</summary>

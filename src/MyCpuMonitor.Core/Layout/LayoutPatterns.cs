@@ -5,6 +5,8 @@ namespace MyCpuMonitor.Core.Layout;
 
 public static class LayoutPatterns
 {
+    // All pages, shown or not: hidden tabs keep their history complete.
+
     /// <summary>Process name patterns used by a layout's charts, values and value lists (to be sampled at the fast rate).</summary>
     public static IEnumerable<string> Watched(LayoutDocument layout) => Series(layout)
         .OfType<ProcessSeries>()
@@ -25,7 +27,7 @@ public static class LayoutPatterns
             else if (series.Metric == GpuMetric.Utilization && adapters.FirstOrDefault(a => a.Name == series.Adapter) is { HasNvml: false })
                 result.Add((series.Adapter, "*"));
         }
-        foreach (var widget in StackWidgetConfig.Leaves(layout.Widgets).OfType<GpuEnginesWidgetConfig>())
+        foreach (var widget in StackWidgetConfig.Leaves(layout.AllWidgets).OfType<GpuEnginesWidgetConfig>())
         {
             var adapter = widget.Adapter ?? adapters.FirstOrDefault()?.Name;
             if (adapter is not null)
@@ -34,7 +36,7 @@ public static class LayoutPatterns
         return result;
     }
 
-    private static IEnumerable<SeriesRef> Series(LayoutDocument layout) => StackWidgetConfig.Leaves(layout.Widgets).SelectMany(w => w switch
+    private static IEnumerable<SeriesRef> Series(LayoutDocument layout) => StackWidgetConfig.Leaves(layout.AllWidgets).SelectMany(w => w switch
     {
         ChartWidgetConfig c => c.Series.Select(s => s.Source),
         ValueWidgetConfig v => [v.Source],

@@ -32,16 +32,38 @@ public partial class App : Application
         // A kernel session outlives its process: stop it on any managed exit path. A hard kill cannot be caught; the
         // next start stops the stale session.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => _events.Dispose();
-        AppDomain.CurrentDomain.UnhandledException += (_, _) => _events.Dispose();
-        UnhandledException += (_, _) => _events.Dispose();
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            LogCrash(e.ExceptionObject as Exception);
+            _events.Dispose();
+        };
+        UnhandledException += (_, e) =>
+        {
+            LogCrash(e.Exception);
+            _events.Dispose();
+        };
         _gpu = new GpuProbe();
         _engine = new SamplingEngine(_probe, settings.SamplingOptions, _events, _gpu);
         var monitor = new MonitorService(_engine, DispatcherQueue.GetForCurrentThread(), settings.CpuScale);
+        // Before the window: layouts referencing plugin widgets find them registered.
+        Plugins.PluginRuntime.Initialize(settings.DevPluginFolders, Environment.GetCommandLineArgs());
 
         _window = new MainWindow(session, monitor);
         _window.Closed += (_, _) => Shutdown();
         _window.Activate();
         _engine.Start();
+    }
+
+    /// <summary>Appends the exception to crash.log in the data folder (a plugin or a WinUI error would otherwise leave no trace).</summary>
+    private static void LogCrash(Exception? exception)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(AppPaths.Root, "crash.log"), $"{DateTime.Now:O} {exception}{Environment.NewLine}{Environment.NewLine}");
+        }
+        catch (IOException)
+        {
+        }
     }
 
     private void Shutdown()

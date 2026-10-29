@@ -29,7 +29,7 @@ internal static class DocView
     /// <summary>Widget help on hover: what the widget is, and for charts and values what each series means.</summary>
     public static ToolTip WidgetTooltip(WidgetConfig config)
     {
-        var tooltip = Tooltip(Docs.Of(WidgetCatalog.KindOf(config)));
+        var tooltip = Tooltip(Docs.Of(config));
         var text = (RichTextBlock)tooltip.Content;
         foreach (var (label, series) in Series(config))
         {
@@ -44,7 +44,7 @@ internal static class DocView
     public static RichTextBlock WidgetDetails(WidgetConfig config)
     {
         var text = new RichTextBlock { TextWrapping = TextWrapping.Wrap };
-        Append(text, Docs.Of(WidgetCatalog.KindOf(config)).Details);
+        Append(text, Docs.Of(config).Details);
         foreach (var (label, series) in Series(config))
         {
             var doc = Docs.Of(series);

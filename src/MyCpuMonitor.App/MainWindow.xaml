@@ -55,6 +55,12 @@
                                 </MenuFlyoutItem.Icon>
                             </MenuFlyoutItem>
                             <MenuFlyoutSeparator />
+                            <MenuFlyoutItem Click="OnAddTabClick" Text="Add tab…">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE737;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutSeparator />
                             <MenuFlyoutItem Click="OnDeleteLayoutClick" Text="Delete…">
                                 <MenuFlyoutItem.Icon>
                                     <FontIcon Glyph="&#xE74D;" />
@@ -63,7 +69,7 @@
                         </MenuFlyout>
                     </DropDownButton.Flyout>
                 </DropDownButton>
-                <Button Click="OnEditClick" ToolTipService.ToolTip="Edit layout (move, resize, add, remove widgets)">
+                <Button AutomationProperties.Name="Edit" Click="OnEditClick" ToolTipService.ToolTip="Edit layout (move, resize, add, remove widgets)">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon FontSize="14" Glyph="&#xE70F;" />
                         <TextBlock Text="Edit" />
@@ -82,7 +88,7 @@
                         <TextBlock Text="Add widget" />
                     </StackPanel>
                     <DropDownButton.Flyout>
-                        <MenuFlyout x:Name="AddWidgetMenu" Placement="BottomEdgeAlignedLeft" />
+                        <MenuFlyout x:Name="AddWidgetMenu" Opening="OnAddWidgetMenuOpening" Placement="BottomEdgeAlignedLeft" />
                     </DropDownButton.Flyout>
                 </DropDownButton>
                 <Button Click="OnDoneClick" Style="{StaticResource AccentButtonStyle}">
@@ -109,6 +115,12 @@
                     VerticalAlignment="Center"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     Style="{StaticResource CaptionTextBlockStyle}" />
+                <Button
+                    AutomationProperties.Name="Plugins"
+                    Click="OnPluginsClick"
+                    ToolTipService.ToolTip="Plugins: browse, install, update and develop widget plugins">
+                    <FontIcon FontSize="14" Glyph="&#xEA86;" />
+                </Button>
                 <ToggleButton
                     x:Name="TopmostButton"
                     Click="OnTopmostClick"
@@ -153,9 +165,15 @@
             Margin="8,0,8,4"
             IsOpen="False" />
 
+        <!-- Column 0: the tab rail (created in code), shown when the layout has several pages or in edit mode. -->
+        <Grid x:Name="BoardArea" Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
         <board:BoardView
             x:Name="Board"
-            Grid.Row="2"
+            Grid.Column="1"
             DoubleTapped="OnBoardDoubleTapped"
             LayoutEdited="OnBoardLayoutEdited"
             PointerCaptureLost="OnBoardPointerReleased"
@@ -163,5 +181,6 @@
             PointerPressed="OnBoardPointerPressed"
             PointerReleased="OnBoardPointerReleased"
             WidgetConfigChanged="OnWidgetConfigChanged" />
+        </Grid>
     </Grid>
 </Window>

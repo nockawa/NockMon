@@ -114,7 +114,7 @@ public sealed partial class WidgetHost : UserControl
             Root.Children.Add(_help);
         }
         var shown = Shown;
-        _help.Title = WidgetCatalog.DisplayName(WidgetCatalog.KindOf(shown));
+        _help.Title = WidgetCatalog.DisplayName(shown);
         _help.Content = Help.DocView.WidgetDetails(shown);
         _help.IsOpen = true;
     }

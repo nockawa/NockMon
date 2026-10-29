@@ -105,8 +105,27 @@ public static partial class Docs
 
                 In edit mode: drop a widget onto another to stack it; "Unstack" moves the shown widget out; configure to reorder, remove, or edit items.
                 """),
+            WidgetKind.Plugin => D(title,
+                "A widget provided by a plugin.",
+                """
+                Plugins add widget kinds to My CPU Monitor. Install them from the **Plugins** dialog (toolbar): it lists the plugins published on nuget.org and the other sources you add, installs, updates and uninstalls them.
+
+                A plugin runs inside My CPU Monitor, with administrator rights: install only plugins whose author you trust.
+                """),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
         };
+    }
+
+    /// <summary>Documentation of a widget; for a plugin widget, the plugin's, or why it is missing.</summary>
+    public static Doc Of(WidgetConfig config)
+    {
+        if (config is not PluginWidgetConfig plugin)
+            return Of(WidgetCatalog.KindOf(config));
+        if (PluginCatalog.Find(plugin) is not { } info)
+            return D(plugin.Widget, $"Plugin '{plugin.Plugin}' is not installed or failed to load.",
+                $"This widget comes from the plugin `{plugin.Plugin}`. Install it from the **Plugins** dialog (toolbar); the widget's settings are kept meanwhile.");
+        var by = string.IsNullOrEmpty(info.PluginAuthors) ? "" : $" by {info.PluginAuthors}";
+        return D(info.DisplayName, info.Summary, $"{info.Details}\n\n**Plugin:** {info.PluginTitle} {info.PluginVersion}{by}.");
     }
 
     /// <summary>Documentation of a series' metric; for a process series, the metric's (the pattern is the user's).</summary>

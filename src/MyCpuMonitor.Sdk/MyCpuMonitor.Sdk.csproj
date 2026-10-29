@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Contract between My CPU Monitor and its widget plugins. Plugins reference this package (PrivateAssets="all"):
+    its build files turn the plugin project into a plugin package (see build\MyCpuMonitor.Sdk.targets). At run time
+    the host provides this assembly and the Windows App SDK; the plugin ships only its own files.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>MyCpuMonitor.Sdk</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Plain managed library: referencing apps must not build/restore it per RID (concurrent RID restores clash). -->
+    <IsRidAgnostic>true</IsRidAgnostic>
+
+    <PackageId>MyCpuMonitor.Sdk</PackageId>
+    <!-- Major.minor is the plugin API version (PluginApi.Version): keep them in sync. -->
+    <Version>1.0.0</Version>
+    <Authors>Loïc Baumann</Authors>
+    <Description>SDK to write widget plugins for My CPU Monitor (mycpumon): plugin interfaces and packaging. Reference it with PrivateAssets="all" and pack: the package is a plugin.</Description>
+    <PackageTags>mycpumon;plugin;sdk;widget;winui</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.6.4" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="2.6.4" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="build\**" Pack="true" PackagePath="build\" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

@@ -66,7 +66,7 @@ internal static class StackEditor
                 for (var c = 0; c < 4; c++)
                     row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-                var kind = WidgetCatalog.DisplayName(WidgetCatalog.KindOf(item));
+                var kind = WidgetCatalog.DisplayName(item);
                 row.Children.Add(new TextBlock
                 {
                     Text = string.IsNullOrEmpty(item.Title) ? kind : $"{item.Title}  ({kind.ToLowerInvariant()})",

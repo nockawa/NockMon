@@ -1,0 +1,17 @@
+<Project>
+
+  <!-- Defaults making the referencing project a My CPU Monitor plugin. The project may override any of them. -->
+  <PropertyGroup>
+    <!-- Plugin API version this SDK implements (PluginApi.Version): checked by the host at load. -->
+    <MyCpuMonPluginApiVersion>1.0</MyCpuMonPluginApiVersion>
+
+    <PackageType Condition="'$(PackageType)' == ''">MyCpuMonPlugin</PackageType>
+    <!-- Dependencies are copied next to the plugin and resolved by its own load context. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- The package carries the plugin folder (plugin\), not lib\, and no NuGet dependencies. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5100;NU5128</NoWarn>
+  </PropertyGroup>
+
+</Project>

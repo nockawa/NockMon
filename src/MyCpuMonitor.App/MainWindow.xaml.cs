@@ -20,6 +20,7 @@ public sealed partial class MainWindow : Window
     private readonly nint _hwnd;
     private readonly TrayIcon _tray;
     private readonly float[] _trayHistory = new float[64];
+    private readonly Tabs.TabRail _rail = new();
     private bool _updatingPicker;
     private bool _exiting;
     private bool _compact;
@@ -60,13 +61,8 @@ public sealed partial class MainWindow : Window
         SingleInstance.Listen(_hwnd, ShowFromTray);
         SetAlwaysOnTop(session.Settings.AlwaysOnTop);
 
-        foreach (var kind in WidgetCatalog.Kinds)
-        {
-            var item = new MenuFlyoutItem { Text = WidgetCatalog.DisplayName(kind) };
-            ToolTipService.SetToolTip(item, Help.DocView.Tooltip(Core.Help.Docs.Of(kind)));
-            item.Click += (_, _) => AddWidget(kind);
-            AddWidgetMenu.Items.Add(item);
-        }
+        Plugins.PluginWidgetView.OpenPluginsRequested += () => OpenPlugins(0);
+        SetUpTabs();
 
         _session.CurrentChanged += OnCurrentLayoutChanged;
         OnCurrentLayoutChanged();
@@ -111,6 +107,7 @@ public sealed partial class MainWindow : Window
     private void OnCurrentLayoutChanged()
     {
         Board.Layout = _session.Current;
+        UpdateRail();
         RefreshPicker();
         UpdateWatchedPatterns();
     }
@@ -273,6 +270,7 @@ public sealed partial class MainWindow : Window
         _compact = compact;
         Toolbar.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         Info.IsOpen = false;
+        UpdateRail();
         if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
             presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: !compact);
         // WinUI: hiding the title bar sets AppWindow.TitleBar.ExtendsContentIntoTitleBar, and showing it again does not
@@ -427,6 +425,140 @@ public sealed partial class MainWindow : Window
         Board.Rebuild();
     }
 
+    // --- Tabs (pages of the layout) --------------------------------------------------------------
+
+    private void SetUpTabs()
+    {
+        BoardArea.Children.Insert(0, _rail);
+        _rail.PageSelected += SwitchPage;
+        _rail.AddRequested += AddTab;
+        _rail.RenameRequested += RenameTab;
+        _rail.IconRequested += ChangeTabIcon;
+        _rail.DuplicateRequested += index => ChangePages(() => LayoutPages.Duplicate(_session.Current, index), rebuild: true);
+        _rail.DeleteRequested += DeleteTab;
+        _rail.MoveRequested += (from, to) => ChangePages(() => LayoutPages.Move(_session.Current, from, to), rebuild: false);
+        Board.PageDropTarget = _rail.TabAt;
+        Board.PageDropHover += _rail.Highlight;
+        Board.MoveToPageRequested += MoveWidgetToTab;
+
+        // Ctrl+Tab / Ctrl+Shift+Tab: next / previous tab; Ctrl+1…9: tab n. Work in compact mode too.
+        RootGrid.KeyboardAcceleratorPlacementMode = Microsoft.UI.Xaml.Input.KeyboardAcceleratorPlacementMode.Hidden;
+        Accelerator(Windows.System.VirtualKey.Tab, Windows.System.VirtualKeyModifiers.Control, () => CycleTab(1));
+        Accelerator(Windows.System.VirtualKey.Tab, Windows.System.VirtualKeyModifiers.Control | Windows.System.VirtualKeyModifiers.Shift, () => CycleTab(-1));
+        for (var i = 0; i < 9; i++)
+        {
+            var index = i;
+            Accelerator(Windows.System.VirtualKey.Number1 + i, Windows.System.VirtualKeyModifiers.Control, () => SwitchPage(index));
+        }
+    }
+
+    private void Accelerator(Windows.System.VirtualKey key, Windows.System.VirtualKeyModifiers modifiers, Action action)
+    {
+        var accelerator = new Microsoft.UI.Xaml.Input.KeyboardAccelerator { Key = key, Modifiers = modifiers };
+        accelerator.Invoked += (_, e) =>
+        {
+            action();
+            e.Handled = true;
+        };
+        RootGrid.KeyboardAccelerators.Add(accelerator);
+    }
+
+    /// <summary>The rail shows with several pages, or in edit mode (to add one); never in compact mode.</summary>
+    private void UpdateRail()
+    {
+        _rail.Show(_session.Current);
+        _rail.Visibility = !_compact && (_session.Current.Pages.Count > 1 || _session.IsEditing) ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void CycleTab(int direction)
+    {
+        var count = _session.Current.Pages.Count;
+        if (count > 1)
+            SwitchPage(((_session.Current.ActivePage + direction) % count + count) % count);
+    }
+
+    /// <summary>Shows another page. Its widgets read the history: what happened while it was hidden is there.</summary>
+    private void SwitchPage(int index)
+    {
+        var layout = _session.Current;
+        if (index == layout.ActivePage || index < 0 || index >= layout.Pages.Count)
+        {
+            _rail.Show(layout); // Re-selects the shown tab.
+            return;
+        }
+        layout.ActivePage = index;
+        Info.IsOpen = false;
+        Board.Rebuild();
+        _rail.Show(layout);
+        Run(_session.SaveCurrent); // Remembers the tab (part of the session while editing).
+    }
+
+    /// <summary>Applies a page change, refreshes the rail (and the board), persists outside an edit session.</summary>
+    private void ChangePages(Action change, bool rebuild)
+    {
+        if (!Run(change))
+            return;
+        if (rebuild)
+            Board.Rebuild();
+        UpdateRail();
+        UpdateWatchedPatterns();
+        Run(_session.SaveCurrent);
+    }
+
+    private void OnAddTabClick(object sender, RoutedEventArgs e) => AddTab();
+
+    private async void AddTab()
+    {
+        var name = await Dialogs.PromptNameAsync(Content.XamlRoot, "New tab", LayoutPages.NewName(_session.Current), "Add", "Tab name");
+        if (name is null)
+            return;
+        ChangePages(() => LayoutPages.Add(_session.Current, name), rebuild: true);
+        if (_session.Current.Pages.Count == 2)
+            ShowInfo(InfoBarSeverity.Informational, "Tabs",
+                "Switch with the rail on the left, Ctrl+Tab or Ctrl+1…9. Right-click a tab to rename it, change its icon or delete it; in edit mode, drop a widget on a tab to move it there.");
+    }
+
+    private async void RenameTab(int index)
+    {
+        var page = _session.Current.Pages[index];
+        var name = await Dialogs.PromptNameAsync(Content.XamlRoot, "Rename tab", page.Name, "Rename", "Tab name");
+        if (name is not null)
+            ChangePages(() => page.Name = name, rebuild: false);
+    }
+
+    private async void ChangeTabIcon(int index)
+    {
+        var page = _session.Current.Pages[index];
+        var icon = await Tabs.IconPicker.PickAsync(Content.XamlRoot, page.Icon);
+        if (icon is not null)
+            ChangePages(() => page.Icon = icon, rebuild: false);
+    }
+
+    private async void DeleteTab(int index)
+    {
+        var page = _session.Current.Pages[index];
+        var count = page.Widgets.Count;
+        if (count > 0 && !await Dialogs.ConfirmAsync(Content.XamlRoot, "Delete tab",
+                $"Delete '{page.Name}' and its {count} widget{(count == 1 ? "" : "s")}?", "Delete"))
+            return;
+        ChangePages(() => LayoutPages.Remove(_session.Current, index), rebuild: true);
+    }
+
+    private void MoveWidgetToTab(WidgetConfig widget, int index)
+    {
+        var bounds = Board.PlacementBounds;
+        var page = _session.Current.Pages[index];
+        if (!LayoutPages.MoveWidget(_session.Current, widget, index, bounds.Columns, bounds.Rows))
+        {
+            ShowInfo(InfoBarSeverity.Warning, "No free space", $"No room for this widget on '{page.Name}'. Make room there first.");
+            return;
+        }
+        Board.Rebuild();
+        UpdateWatchedPatterns();
+        ShowInfo(InfoBarSeverity.Success, "Moved", $"Moved to '{page.Name}'.");
+    }
+
+
     // --- Edit session -----------------------------------------------------------------------------
 
     private void OnEditClick(object sender, RoutedEventArgs e) => SetEditing(Run(_session.BeginEdit));
@@ -450,12 +582,91 @@ public sealed partial class MainWindow : Window
         Board.IsEditing = editing;
         if (!editing)
             Info.IsOpen = false;
+        UpdateRail();
     }
 
     private void OnBoardLayoutEdited(object? sender, EventArgs e)
     {
         Info.IsOpen = false;
         UpdateWatchedPatterns();
+    }
+
+    /// <summary>Built-in kinds, then the loaded plugins' widgets (they change as plugins are installed).</summary>
+    private void OnAddWidgetMenuOpening(object? sender, object e)
+    {
+        AddWidgetMenu.Items.Clear();
+        foreach (var kind in WidgetCatalog.Kinds)
+        {
+            var item = new MenuFlyoutItem { Text = WidgetCatalog.DisplayName(kind) };
+            ToolTipService.SetToolTip(item, Help.DocView.Tooltip(Core.Help.Docs.Of(kind)));
+            item.Click += (_, _) => AddWidget(kind);
+            AddWidgetMenu.Items.Add(item);
+        }
+        AddWidgetMenu.Items.Add(new MenuFlyoutSeparator());
+        foreach (var widget in PluginCatalog.Widgets.OrderBy(w => w.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+        {
+            var item = new MenuFlyoutItem { Text = widget.DisplayName, Icon = new FontIcon { Glyph = "" } };
+            ToolTipService.SetToolTip(item, Help.DocView.Tooltip(new Core.Help.Doc($"{widget.DisplayName} ({widget.PluginTitle})", widget.Summary, "")));
+            item.Click += (_, _) => AddWidget(widget);
+            AddWidgetMenu.Items.Add(item);
+        }
+        var more = new MenuFlyoutItem { Text = "Get plugins…", Icon = new FontIcon { Glyph = "" } };
+        more.Click += (_, _) => OpenPlugins(0);
+        AddWidgetMenu.Items.Add(more);
+    }
+
+    private void OnPluginsClick(object sender, RoutedEventArgs e) => OpenPlugins(0);
+
+    private bool _pluginsOpen;
+
+    private async void OpenPlugins(int tab)
+    {
+        if (_pluginsOpen)
+            return;
+        _pluginsOpen = true;
+        try
+        {
+            if (await Plugins.PluginsDialog.ShowAsync(Content.XamlRoot, _session, Restart, tab))
+                Board.Rebuild(); // Placeholders of newly loaded plugins become widgets.
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+            // Another dialog is open: WinUI shows one at a time.
+            ShowInfo(InfoBarSeverity.Warning, "Plugins", "Close the open dialog first.");
+        }
+        finally
+        {
+            _pluginsOpen = false;
+        }
+    }
+
+    /// <summary>Restarts the app (same elevation, no prompt): plugin updates and removals take effect.</summary>
+    private void Restart()
+    {
+        try
+        {
+            Program.StartReplacement();
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            ShowInfo(InfoBarSeverity.Error, "Restart", ex.Message);
+            return;
+        }
+        Exit();
+    }
+
+    private void AddWidget(PluginWidgetInfo widget)
+    {
+        var bounds = Board.PlacementBounds;
+        var spot = BoardRules.FindFreeSpot(_session.Current.Widgets, widget.DefaultSize, bounds.Columns, bounds.Rows)
+                   ?? BoardRules.FindFreeSpot(_session.Current.Widgets, widget.MinSize, bounds.Columns, bounds.Rows);
+        if (spot is null)
+        {
+            ShowInfo(InfoBarSeverity.Warning, "No free space", $"No room for {widget.DisplayName} in the visible board. Enlarge the window or make room.");
+            return;
+        }
+        _session.Current.Widgets.Add(WidgetCatalog.Create(widget, spot.Value));
+        Board.Rebuild();
     }
 
     private void AddWidget(WidgetKind kind)

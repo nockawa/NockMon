@@ -35,6 +35,15 @@ public sealed class AppSettings
     public bool CloseToTray { get; set; } = true;
     public string ActiveLayout { get; set; } = "Default";
 
+    /// <summary>Where the Plugins dialog looks for plugins: NuGet V3 feeds (URLs) or folders of .nupkg files.</summary>
+    public List<string> PluginSources { get; set; } = [Plugins.PluginFeeds.NuGetOrg];
+
+    /// <summary>Show prerelease versions of plugins.</summary>
+    public bool PluginPrerelease { get; set; }
+
+    /// <summary>Plugin build output folders loaded at start (plugin development), in addition to installed plugins.</summary>
+    public List<string> DevPluginFolders { get; set; } = [];
+
     /// <summary>Main window placement at last close; null = default size.</summary>
     public WindowPlacementSettings? Window { get; set; }
 

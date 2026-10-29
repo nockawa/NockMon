@@ -71,6 +71,7 @@
                     x:Name="UnstackButton"
                     Padding="6,4"
                     Click="OnUnstackClick"
+                    AutomationProperties.Name="Unstack the shown widget"
                     ToolTipService.ToolTip="Unstack the shown widget"
                     Visibility="Collapsed">
                     <FontIcon FontSize="12" Glyph="&#xE8A7;" />
@@ -78,6 +79,7 @@
                 <Button
                     Padding="6,4"
                     Click="OnCloneClick"
+                    AutomationProperties.Name="Clone"
                     ToolTipService.ToolTip="Clone">
                     <FontIcon FontSize="12" Glyph="&#xE8C8;" />
                 </Button>
@@ -85,12 +87,14 @@
                     x:Name="ConfigureButton"
                     Padding="6,4"
                     Click="OnConfigureClick"
+                    AutomationProperties.Name="Configure"
                     ToolTipService.ToolTip="Configure">
                     <FontIcon FontSize="12" Glyph="&#xE713;" />
                 </Button>
                 <Button
                     Padding="6,4"
                     Click="OnDeleteClick"
+                    AutomationProperties.Name="Remove"
                     ToolTipService.ToolTip="Remove">
                     <FontIcon FontSize="12" Glyph="&#xE74D;" />
                 </Button>
