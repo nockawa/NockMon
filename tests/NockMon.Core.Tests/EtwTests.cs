@@ -139,20 +139,25 @@ public class EtwProcessingTests
     }
 }
 
-/// <summary>Integration with a real kernel session (requires elevation; skipped otherwise).</summary>
+/// <summary>
+/// Integration with a real kernel session (requires elevation; skipped otherwise). Own session names: starting a
+/// monitor stops a session of the same name, which would kill the events of a NockMon running on this machine.
+/// </summary>
 public class EtwIntegrationTests
 {
+    private const string TestSession = "NockMon-Kernel-Tests";
+
     [Fact]
     public void KernelSession_DeliversDiskDpcAndProcessEvents_AndStopsOnDispose()
     {
         if (!Environment.IsPrivilegedProcess)
             Assert.Skip("Kernel ETW sessions need elevation.");
 
-        using (var monitor = new EtwKernelMonitor())
+        using (var monitor = new EtwKernelMonitor(TestSession))
         {
             monitor.Start();
             Assert.Null(monitor.Status);
-            Assert.NotNull(TraceEventSession.GetActiveSession(EtwKernelMonitor.SessionName));
+            Assert.NotNull(TraceEventSession.GetActiveSession(TestSession));
 
             Thread.Sleep(1500); // Session startup.
             using (var p = Process.Start(new ProcessStartInfo("cmd.exe", "/c echo nockmon-etw-test") { UseShellExecute = false, CreateNoWindow = true })!)
@@ -173,7 +178,36 @@ public class EtwIntegrationTests
             Assert.NotEmpty(drivers);
             Assert.DoesNotContain(drivers, d => d.Name == "unknown" && d.DpcCount > totals.DpcCount / 2);
         }
-        Assert.Null(TraceEventSession.GetActiveSession(EtwKernelMonitor.SessionName));
+        Assert.Null(TraceEventSession.GetActiveSession(TestSession));
+    }
+
+    /// <summary>
+    /// Another program stopping the session (a second monitor of the same name did, at start) used to throw on the ETW
+    /// thread and kill the process. Now the monitor reports it, and its dispose leaves the name alone.
+    /// </summary>
+    [Fact]
+    public void SessionStoppedByAnotherProgram_IsReported_NotFatal()
+    {
+        if (!Environment.IsPrivilegedProcess)
+            Assert.Skip("Kernel ETW sessions need elevation.");
+        const string name = TestSession + "-Stopped";
+
+        using var monitor = new EtwKernelMonitor(name);
+        monitor.Start();
+        Assert.Null(monitor.Status);
+        Thread.Sleep(1000);
+
+        TraceEventSession.GetActiveSession(name)!.Stop();
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (monitor.Status is null && DateTime.UtcNow < deadline)
+        {
+            _ = monitor.EventsLost; // Polled by the window meanwhile: must not throw either.
+            Thread.Sleep(50);
+        }
+
+        Assert.NotNull(monitor.Status);
+        Assert.Contains("Restart NockMon", monitor.Status, StringComparison.Ordinal);
+        _ = monitor.EventsLost;
     }
 
     [Fact]

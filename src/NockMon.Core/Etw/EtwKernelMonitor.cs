@@ -12,12 +12,15 @@ namespace NockMon.Core.Etw;
 /// lock; the sampler harvests (and resets) them. A stale session left by a crash is stopped at start.
 /// No ImageLoad keyword: it triggers a rundown of every module of every process; drivers come from EnumDeviceDrivers.
 /// </summary>
-public sealed class EtwKernelMonitor : IKernelEventSource
+/// <param name="sessionName">ETW session name. Tests use their own: starting stops a session of the same name, which
+/// would be a running NockMon's.</param>
+public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.SessionName) : IKernelEventSource
 {
     public const string SessionName = "NockMon-Kernel";
     private const int MaxEvents = 500;
     private static readonly TimeSpan DriverRefresh = TimeSpan.FromMinutes(1);
 
+    private readonly string _sessionName = sessionName;
     private readonly Lock _lock = new();
     private readonly DriverMap _drivers = new();
     private readonly Dictionary<string, int> _driverIndex = new(StringComparer.OrdinalIgnoreCase);
@@ -29,9 +32,33 @@ public sealed class EtwKernelMonitor : IKernelEventSource
     private Thread? _thread;
     private long _lastDriverRefresh;
 
-    public string? Status { get; private set; } = "Not started.";
+    private volatile string? _status = "Not started.";
+    private long _eventsLost;
 
-    public long EventsLost => _session?.EventsLost ?? 0;
+    /// <summary>Set by the ETW thread too (session stopped by another program).</summary>
+    public string? Status
+    {
+        get => _status;
+        private set => _status = value;
+    }
+
+    /// <summary>Queries the session: the last known count once it is gone (the query would throw).</summary>
+    public long EventsLost
+    {
+        get
+        {
+            if (_session is not { } session || _status is not null)
+                return _eventsLost;
+            try
+            {
+                return _eventsLost = session.EventsLost;
+            }
+            catch (Exception e) when (e is System.Runtime.InteropServices.COMException or InvalidOperationException or UnauthorizedAccessException)
+            {
+                return _eventsLost; // Stopped meanwhile: the ETW thread reports it.
+            }
+        }
+    }
 
     public void Start()
     {
@@ -42,18 +69,18 @@ public sealed class EtwKernelMonitor : IKernelEventSource
         }
         try
         {
-            TraceEventSession.GetActiveSession(SessionName)?.Stop();
+            TraceEventSession.GetActiveSession(_sessionName)?.Stop();
             _drivers.Refresh();
             _lastDriverRefresh = Stopwatch.GetTimestamp();
 
-            _session = new TraceEventSession(SessionName) { StopOnDispose = true };
+            _session = new TraceEventSession(_sessionName) { StopOnDispose = true };
             _session.EnableKernelProvider(
                 KernelTraceEventParser.Keywords.DiskIO | KernelTraceEventParser.Keywords.NetworkTCPIP
                 | KernelTraceEventParser.Keywords.Process | KernelTraceEventParser.Keywords.DeferedProcedureCalls
                 | KernelTraceEventParser.Keywords.Interrupt);
             Subscribe(_session.Source.Kernel);
-            _thread = new Thread(() => _session.Source.Process()) { IsBackground = true, Name = "NockMon ETW" };
-            _thread.Start();
+            _thread = new Thread(ProcessEvents) { IsBackground = true, Name = "NockMon ETW" };
+            _thread.Start(_session);
             Status = null;
         }
         catch (Exception e) when (e is UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
@@ -62,6 +89,31 @@ public sealed class EtwKernelMonitor : IKernelEventSource
             _session?.Dispose();
             _session = null;
         }
+    }
+
+    /// <summary>
+    /// The ETW thread. <c>Process</c> returns when <see cref="Dispose"/> stops the session; when another program stops
+    /// it, it returns or throws (ERROR_WMI_INSTANCE_NOT_FOUND). Either way the app keeps running and reports it.
+    /// </summary>
+    private void ProcessEvents(object? state)
+    {
+        var session = (TraceEventSession)state!;
+        string? failure = null;
+        try
+        {
+            session.Source.Process();
+        }
+        catch (Exception e) // Unhandled here, any exception ends the process: report it instead.
+        {
+            failure = e.Message;
+        }
+        if (Volatile.Read(ref _session) != session)
+            return; // Disposed: a normal stop.
+        // The name may now belong to the session of whoever stopped ours: never stop it on dispose.
+        session.StopOnDispose = false;
+        Status = failure is null
+            ? "The kernel event session was stopped by another program. Restart NockMon to resume."
+            : $"The kernel event session failed ({failure.TrimEnd('.')}). Restart NockMon to resume.";
     }
 
     private void Subscribe(KernelTraceEventParser k)
