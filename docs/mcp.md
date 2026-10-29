@@ -42,6 +42,11 @@ The robot icon takes the accent color while an agent is connected; its tooltip l
 The server is reached through the `nockmon mcp` command, a stdio MCP server that relays to the running NockMon. It
 never starts NockMon itself (no UAC prompt behind your back): start NockMon first, turn agents on, then connect.
 
+`nockmon` is on the PATH with the dotnet tool and with the installer's PATH option. Otherwise (single executable, or
+installed without the PATH option), use the executable's full path instead of `nockmon`, for example
+`"C:\Program Files\NockMon\NockMon.exe" mcp`. The robot button's panel always shows the command that works for your
+installation.
+
 **Claude Code**:
 
 ```powershell

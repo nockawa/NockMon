@@ -24,6 +24,7 @@
     <Description>SDK to write widget plugins for NockMon (nockmon): plugin interfaces and packaging. Reference it with PrivateAssets="all" and pack: the package is a plugin.</Description>
     <PackageTags>nockmon;plugin;sdk;widget;winui</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
     <PackageProjectUrl>https://github.com/nockawa/NockMon/blob/main/docs/plugins.md</PackageProjectUrl>
     <RepositoryUrl>https://github.com/nockawa/NockMon</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -38,6 +39,7 @@
   <ItemGroup>
     <None Include="build\**" Pack="true" PackagePath="build\" />
     <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\docs\images\icon.png" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
 </Project>

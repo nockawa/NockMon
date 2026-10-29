@@ -9,7 +9,19 @@ namespace NockMon;
 /// <summary>AI agents (MCP) toolbar button: opt-in switches, connection state, how to connect an agent.</summary>
 public sealed partial class MainWindow
 {
-    private const string AgentCommand = "claude mcp add nockmon -- nockmon mcp";
+    /// <summary>
+    /// How agents start the relay: "nockmon" when it is on PATH (dotnet tool, installer), otherwise this executable
+    /// (single-file build, or an install without the PATH option).
+    /// </summary>
+    private static readonly string RelayCommand = IsOnPath("nockmon") ? "nockmon" : Quote(Environment.ProcessPath!);
+
+    private static string AgentCommand => $"claude mcp add nockmon -- {RelayCommand} mcp";
+
+    private static bool IsOnPath(string command) =>
+        (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Any(dir => File.Exists(Path.Combine(dir, command + ".exe")) || File.Exists(Path.Combine(dir, command + ".cmd")));
+
+    private static string Quote(string path) => path.Contains(' ') ? $"\"{path}\"" : path;
 
     private Agents.AgentAccess? _agents;
 
@@ -99,8 +111,8 @@ public sealed partial class MainWindow
                 new TextBlock { Text = "Connect an agent", Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"], Margin = new Thickness(0, 8, 0, 0) },
                 Caption("Claude Code, in a terminal:"),
                 commandRow,
-                Caption("Other MCP clients: a stdio server with command \"nockmon\" and argument \"mcp\". It connects to this running " +
-                        "instance (it never starts NockMon)."),
+                Caption($"Other MCP clients: a stdio server with command \"{RelayCommand.Trim('"')}\" and argument \"mcp\". It connects to this " +
+                        "running instance (it never starts NockMon)."),
             },
         };
         Refresh();

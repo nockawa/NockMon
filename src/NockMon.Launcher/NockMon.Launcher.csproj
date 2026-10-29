@@ -30,10 +30,12 @@
     <RepositoryUrl>https://github.com/nockawa/NockMon</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\docs\images\icon.png" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
   <PropertyGroup>
