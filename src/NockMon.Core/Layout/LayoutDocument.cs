@@ -64,7 +64,7 @@ public sealed class LayoutDocument
         Name = name,
         Widgets =
         [
-            new ProcessTableWidgetConfig { Title = "Top processes", Bounds = new GridRect(0, 0, 10, 8) },
+            new ProcessTableWidgetConfig { Title = "Top processes", Bounds = new GridRect(0, 0, 10, 8), ExcludeIdle = true },
             new ChartWidgetConfig
             {
                 Title = "CPU",

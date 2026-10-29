@@ -72,6 +72,11 @@ public sealed class PersistenceTests : IDisposable
     [Fact]
     public void DefaultLayout_HasNoCollisions() => Assert.Empty(LayoutDocument.CreateDefault().FindCollisions());
 
+    /// <summary>A new user's first view: the Idle process would top the CPU sort on a quiet machine.</summary>
+    [Fact]
+    public void DefaultLayout_ProcessTableExcludesIdle() =>
+        Assert.True(Assert.Single(LayoutDocument.CreateDefault().Widgets.OfType<ProcessTableWidgetConfig>()).ExcludeIdle);
+
     [Theory]
     [InlineData(0, 0, 2, 2, 1, 1, 2, 2, true)]
     [InlineData(0, 0, 2, 2, 2, 0, 2, 2, false)]
