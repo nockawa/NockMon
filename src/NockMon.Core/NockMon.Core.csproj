@@ -16,6 +16,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.0" />
     <PackageReference Include="NuGet.Versioning" Version="7.9.0" />
+    <!-- Official MCP C# SDK, core package (no hosting/DI): the agent server runs over a named pipe (Agents/). -->
+    <PackageReference Include="ModelContextProtocol.Core" Version="2.3.0" />
   </ItemGroup>
 
 </Project>

@@ -44,6 +44,12 @@ public sealed class AppSettings
     /// <summary>Plugin build output folders loaded at start (plugin development), in addition to installed plugins.</summary>
     public List<string> DevPluginFolders { get; set; } = [];
 
+    /// <summary>AI agents may read NockMon's data through MCP (<c>nockmon mcp</c>). Off by default.</summary>
+    public bool AgentAccess { get; set; }
+
+    /// <summary>Agents may read process command lines (they can carry secrets: tokens, paths). Off by default.</summary>
+    public bool AgentCommandLines { get; set; }
+
     /// <summary>Main window placement at last close; null = default size.</summary>
     public WindowPlacementSettings? Window { get; set; }
 

@@ -16,6 +16,10 @@ namespace NockMon.Core.History;
 /// A name series is evicted once it has had no instance for a full slow window. Absent = 0 (sum over no instance).
 /// Not thread-safe: the engine serializes access.
 /// </summary>
+/// <summary>A process field of one image name over a range of scans (<see cref="HistoryStore.AggregateNames"/>).</summary>
+/// <param name="MaxSample">Sample index of the scan holding the maximum.</param>
+public readonly record struct NameAggregate(string Name, float Average, float Max, long MaxSample);
+
 public sealed class HistoryStore
 {
     private static readonly int SystemMetricCount = Enum.GetValues<SystemMetric>().Length;
@@ -271,6 +275,54 @@ public sealed class HistoryStore
 
     /// <summary>True if <paramref name="pattern"/> currently has fast-rate data.</summary>
     public bool IsWatched(string pattern) => _watched.ContainsKey(pattern);
+
+    /// <summary>Wall-clock time (UTC) of sample <paramref name="sample"/>, or null if it is no longer (or not yet) held.</summary>
+    public DateTime? TimeOf(long sample) =>
+        sample >= TotalSamples - Count && sample < TotalSamples ? _time[(int)(sample % Capacity)] : null;
+
+    /// <summary>
+    /// Per image name, <paramref name="field"/> over the scans attached to samples [<paramref name="firstSample"/>,
+    /// <paramref name="endSample"/>): average (absent = 0) and maximum, at scan resolution. Names without any non-zero
+    /// value in the range are skipped. Reads the scan rings directly: no per-sample upsampling.
+    /// </summary>
+    public void AggregateNames(ProcessField field, long firstSample, long endSample, List<NameAggregate> destination)
+    {
+        var f = MetricCatalog.HistoryIndexOf(field);
+        if (f < 0)
+            throw new ArgumentException($"Process field {field} has no history.", nameof(field));
+        destination.Clear();
+
+        var scans = ScanCount;
+        var firstScan = TotalScans - scans;
+        Span<int> slots = scans <= 1024 ? stackalloc int[scans] : new int[scans];
+        var count = 0;
+        for (var k = 0; k < scans; k++)
+        {
+            var slot = (int)((firstScan + k) % ScanCapacity);
+            var sample = _scanSampleIndex[slot];
+            if (sample >= firstSample && sample < endSample)
+                slots[count++] = slot;
+        }
+        if (count == 0)
+            return;
+
+        foreach (var named in _names.Values)
+        {
+            var values = named.Values[f];
+            double sum = 0;
+            var max = 0f;
+            var maxSlot = -1;
+            foreach (var slot in slots[..count])
+            {
+                var v = values[slot];
+                sum += v;
+                if (v > max)
+                    (max, maxSlot) = (v, slot);
+            }
+            if (maxSlot >= 0)
+                destination.Add(new NameAggregate(named.Name, (float)(sum / count), max, _scanSampleIndex[maxSlot]));
+        }
+    }
 
     private void ReadProcess(ProcessSeries series, Span<float> destination)
     {

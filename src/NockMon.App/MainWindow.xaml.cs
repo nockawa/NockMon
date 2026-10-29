@@ -63,6 +63,7 @@ public sealed partial class MainWindow : Window
 
         Plugins.PluginWidgetView.OpenPluginsRequested += () => OpenPlugins(0);
         SetUpTabs();
+        SetUpAgents();
 
         _session.CurrentChanged += OnCurrentLayoutChanged;
         OnCurrentLayoutChanged();
@@ -154,21 +155,53 @@ public sealed partial class MainWindow : Window
             return; // Hidden to the tray: only the tray icon is fed.
 
         Board.RefreshWidgets();
-        var engine = _monitor.Engine;
-        var options = engine.Options;
-        var processes = engine.Read(0, static (_, s, _) => s.ProcessCount);
-        StatusText.Text = string.Create(CultureInfo.CurrentCulture,
-            $"{processes} processes · {engine.WatchedProcessCount} watched · {_monitor.LogicalProcessors} CPUs · " +
-            $"sample {engine.LastSampleDuration.TotalMilliseconds:0.0} ms / {options.Interval.TotalMilliseconds:0} ms · " +
-            $"scan {engine.LastScanDuration.TotalMilliseconds:0.0} ms / {(options.Interval * options.ScanEvery).TotalSeconds:0.#} s · {EtwStatus(engine)}");
+        UpdateEtwInfo();
     }
 
-    private static string EtwStatus(Core.Sampling.SamplingEngine engine) => engine.KernelEvents switch
+    private string? _etwStatusShown;
+    private long _etwLostShown;
+    private DateTime _etwLostShownAt;
+
+    /// <summary>
+    /// Tells when kernel events (ETW) are off (once per distinct reason) or lose events (new losses, at most every 5
+    /// minutes): the metrics they feed silently read 0 or under-report otherwise.
+    /// </summary>
+    private void UpdateEtwInfo()
     {
-        { Status: null, EventsLost: > 0 } events => $"ETW on ({events.EventsLost:N0} events lost)",
-        { Status: null } => "ETW on",
-        _ => "ETW off",
-    };
+        if (_monitor.Engine.KernelEvents is not { } events)
+            return;
+        if (events.Status is { } status)
+        {
+            if (status == _etwStatusShown)
+                return;
+            _etwStatusShown = status;
+            ShowEtwInfo(InfoBarSeverity.Warning, "Kernel events off",
+                $"{status.TrimEnd().TrimEnd('.')}. Disk and network per process, DPC/ISR per driver and the process start/exit log are unavailable.");
+            return;
+        }
+        if (_etwStatusShown is not null)
+        {
+            _etwStatusShown = null;
+            EtwInfo.IsOpen = false; // Recovered.
+        }
+
+        var lost = events.EventsLost;
+        if (lost > _etwLostShown && DateTime.UtcNow - _etwLostShownAt > TimeSpan.FromMinutes(5))
+        {
+            _etwLostShown = lost;
+            _etwLostShownAt = DateTime.UtcNow;
+            ShowEtwInfo(InfoBarSeverity.Informational, "Kernel events lost",
+                string.Create(CultureInfo.CurrentCulture, $"{lost:N0} events lost since start (trace buffers overflowed under load): disk, network and DPC/ISR values may be under-reported for that time."));
+        }
+    }
+
+    private void ShowEtwInfo(InfoBarSeverity severity, string title, string message)
+    {
+        EtwInfo.Severity = severity;
+        EtwInfo.Title = title;
+        EtwInfo.Message = message;
+        EtwInfo.IsOpen = true;
+    }
 
     // --- Tray, visibility, always on top, compact mode --------------------------------------------
 

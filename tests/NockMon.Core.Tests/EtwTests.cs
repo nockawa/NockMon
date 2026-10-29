@@ -32,7 +32,13 @@ internal sealed class FakeEvents : IKernelEventSource
         Drivers.Clear();
     }
 
-    public void CopyRecentEvents(List<ProcessEvent> destination) => destination.Clear();
+    public List<ProcessEvent> Recent = [];
+
+    public void CopyRecentEvents(List<ProcessEvent> destination)
+    {
+        destination.Clear();
+        destination.AddRange(Recent);
+    }
 
     public void Dispose()
     {
