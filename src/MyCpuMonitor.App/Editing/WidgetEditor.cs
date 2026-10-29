@@ -3,6 +3,8 @@ using Microsoft.UI.Xaml.Controls;
 using MyCpuMonitor.Core.Layout;
 using MyCpuMonitor.Core.Metrics;
 using MyCpuMonitor.Core.Persistence;
+using MyCpuMonitor.Help;
+using Docs = MyCpuMonitor.Core.Help.Docs;
 
 namespace MyCpuMonitor.Editing;
 
@@ -16,6 +18,14 @@ internal static class WidgetEditor
     {
         var clone = LayoutStore.Clone(config);
         var panel = new StackPanel { Spacing = 12, MinWidth = 480 };
+        var about = Docs.Of(WidgetCatalog.KindOf(clone));
+        panel.Children.Add(new Expander
+        {
+            Header = new TextBlock { Text = about.Summary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) },
+            Content = DocView.Render(about.Details),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+        });
         var title = new TextBox { Header = "Title", Text = clone.Title ?? "", PlaceholderText = "No title" };
         panel.Children.Add(title);
 
@@ -30,7 +40,8 @@ internal static class WidgetEditor
             DriverTableWidgetConfig d => BuildDrivers(panel, d),
             ProcessEventsWidgetConfig e => BuildProcessEvents(panel, e),
             GpuEnginesWidgetConfig g => BuildGpuEngines(panel, g, context),
-            ObjectTypesWidgetConfig o => BuildSortedTable(panel, o.TopCount, o.SortBy, o.Descending, (top, sort, desc) => (o.TopCount, o.SortBy, o.Descending) = (top, sort, desc)),
+            ObjectTypesWidgetConfig o => BuildSortedTable(panel, o.TopCount, o.SortBy, o.Descending, Docs.Of,
+                (top, sort, desc) => (o.TopCount, o.SortBy, o.Descending) = (top, sort, desc)),
             _ => throw new ArgumentException($"Unknown widget {clone.GetType().Name}.", nameof(config)),
         };
 
@@ -70,14 +81,16 @@ internal static class WidgetEditor
         sort.SelectedIndex = (int)config.SortBy;
         var descending = new ToggleSwitch { Header = "Descending", IsOn = config.Descending };
         var group = new ToggleSwitch { Header = "Group by name", IsOn = config.GroupByName };
+        var excludeIdle = new ToggleSwitch { Header = "Exclude Idle", IsOn = config.ExcludeIdle };
         var filter = new TextBox { Header = "Filter (name pattern)", Text = config.Filter ?? "", PlaceholderText = "All processes" };
 
         panel.Children.Add(Row(top, sort, descending));
-        panel.Children.Add(Row(group));
+        panel.Children.Add(DocView.Attach(sort, f => Docs.Of((ProcessField)f)));
+        panel.Children.Add(Row(group, excludeIdle));
         panel.Children.Add(filter);
 
         var columns = new ColumnListEditor(config.Columns);
-        panel.Children.Add(new TextBlock { Text = "Columns", Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"] });
+        panel.Children.Add(new TextBlock { Text = "Columns (hover for details)", Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"] });
         panel.Children.Add(columns);
 
         return () =>
@@ -89,6 +102,7 @@ internal static class WidgetEditor
             config.SortBy = (ProcessField)((ComboBoxItem)sort.SelectedItem).Tag;
             config.Descending = descending.IsOn;
             config.GroupByName = group.IsOn;
+            config.ExcludeIdle = excludeIdle.IsOn;
             config.Filter = string.IsNullOrWhiteSpace(filter.Text) ? null : filter.Text.Trim();
             config.Columns = selected;
             return null;
@@ -191,6 +205,7 @@ internal static class WidgetEditor
         };
 
         panel.Children.Add(Row(metric, window));
+        panel.Children.Add(DocView.Attach(metric, m => Docs.Of((CoreMetric)m)));
         panel.Children.Add(Row(kernel, columns));
         return () =>
         {
@@ -207,10 +222,11 @@ internal static class WidgetEditor
         var top = new NumberBox { Header = "Rows", Value = config.TopCount, Minimum = 1, Maximum = 500, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 120 };
         var sort = new ComboBox { Header = "Sort by", MinWidth = 200 };
         foreach (var field in Enum.GetValues<Core.Sampling.PoolTagField>())
-            sort.Items.Add(new ComboBoxItem { Content = field.ToString(), Tag = field });
+            sort.Items.Add(new ComboBoxItem { Content = Docs.Of(field).Title, Tag = field });
         sort.SelectedIndex = (int)config.SortBy;
         var descending = new ToggleSwitch { Header = "Descending", IsOn = config.Descending };
         panel.Children.Add(Row(top, sort, descending));
+        panel.Children.Add(DocView.Attach(sort, f => Docs.Of((Core.Sampling.PoolTagField)f)));
         return () =>
         {
             config.TopCount = double.IsNaN(top.Value) ? 20 : (int)top.Value;
@@ -259,16 +275,18 @@ internal static class WidgetEditor
     }
 
     /// <summary>Rows / sort field / order editor for tables sorted by an enum field.</summary>
-    private static Func<string?> BuildSortedTable<TField>(StackPanel panel, int topCount, TField sortBy, bool isDescending, Action<int, TField, bool> apply)
+    private static Func<string?> BuildSortedTable<TField>(StackPanel panel, int topCount, TField sortBy, bool isDescending,
+        Func<TField, Core.Help.Doc> doc, Action<int, TField, bool> apply)
         where TField : struct, Enum
     {
         var top = new NumberBox { Header = "Rows", Value = topCount, Minimum = 1, Maximum = 500, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 120 };
         var sort = new ComboBox { Header = "Sort by", MinWidth = 200 };
         foreach (var field in Enum.GetValues<TField>())
-            sort.Items.Add(new ComboBoxItem { Content = field.ToString(), Tag = field });
+            sort.Items.Add(new ComboBoxItem { Content = doc(field).Title, Tag = field });
         sort.SelectedItem = sort.Items.Cast<ComboBoxItem>().First(i => Equals(i.Tag, sortBy));
         var descending = new ToggleSwitch { Header = "Descending", IsOn = isDescending };
         panel.Children.Add(Row(top, sort, descending));
+        panel.Children.Add(DocView.Attach(sort, f => doc((TField)f)));
         return () =>
         {
             apply(double.IsNaN(top.Value) ? topCount : (int)top.Value, (TField)((ComboBoxItem)sort.SelectedItem).Tag, descending.IsOn);
@@ -281,10 +299,11 @@ internal static class WidgetEditor
         var top = new NumberBox { Header = "Rows", Value = config.TopCount, Minimum = 1, Maximum = 200, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 120 };
         var sort = new ComboBox { Header = "Sort by", MinWidth = 200 };
         foreach (var field in Enum.GetValues<Core.Sampling.DriverField>())
-            sort.Items.Add(new ComboBoxItem { Content = field.ToString(), Tag = field });
+            sort.Items.Add(new ComboBoxItem { Content = Docs.Of(field).Title, Tag = field });
         sort.SelectedIndex = (int)config.SortBy;
         var descending = new ToggleSwitch { Header = "Descending", IsOn = config.Descending };
         panel.Children.Add(Row(top, sort, descending));
+        panel.Children.Add(DocView.Attach(sort, f => Docs.Of((Core.Sampling.DriverField)f)));
         return () =>
         {
             config.TopCount = double.IsNaN(top.Value) ? 15 : (int)top.Value;
@@ -402,6 +421,7 @@ internal sealed class ColumnListEditor : StackPanel
     private void AddRow(ProcessField field, bool visible, double width)
     {
         var check = new CheckBox { Content = MetricCatalog.Get(field).DisplayName, IsChecked = visible, MinWidth = 0 };
+        ToolTipService.SetToolTip(check, DocView.Tooltip(Docs.Of(field), details: true));
         var up = new Button { Content = new FontIcon { Glyph = "", FontSize = 10 }, Padding = new Thickness(6, 4, 6, 4) };
         var down = new Button { Content = new FontIcon { Glyph = "", FontSize = 10 }, Padding = new Thickness(6, 4, 6, 4) };
         var row = new Grid { ColumnSpacing = 4 };

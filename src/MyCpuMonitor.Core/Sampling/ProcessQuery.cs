@@ -18,7 +18,8 @@ public readonly record struct ProcessQueryOptions(
     bool Descending,
     int Top,
     bool GroupByName = false,
-    string? Filter = null);
+    string? Filter = null,
+    bool ExcludeIdle = false);
 
 /// <summary>
 /// Filter, optional grouping by image name, sort and top-N over a snapshot. Owns its buffers:
@@ -49,6 +50,8 @@ public sealed class ProcessQuery
         foreach (ref readonly var p in snapshot.ProcessSpan)
         {
             if (filter is not null && !filter.IsMatch(p.Name))
+                continue;
+            if (options.ExcludeIdle && p.Pid == 0) // System Idle Process: idle time, not work.
                 continue;
 
             if (options.GroupByName && _groups.TryGetValue(p.Name, out var index))

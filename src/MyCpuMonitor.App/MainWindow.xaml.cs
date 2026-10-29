@@ -33,6 +33,8 @@ public sealed partial class MainWindow : Window
 
         Board.ContentFactory = config => WidgetContentFactory.Create(config, _monitor);
         Board.ConfigureRequested += OnConfigureRequested;
+        Board.CloneRequested += CloneWidget;
+        Board.UnstackRequested += Unstack;
         _monitor.Updated += OnMonitorUpdated;
 
         CpuScalePicker.SelectedIndex = (int)session.Settings.CpuScale;
@@ -61,6 +63,7 @@ public sealed partial class MainWindow : Window
         foreach (var kind in WidgetCatalog.Kinds)
         {
             var item = new MenuFlyoutItem { Text = WidgetCatalog.DisplayName(kind) };
+            ToolTipService.SetToolTip(item, Help.DocView.Tooltip(Core.Help.Docs.Of(kind)));
             item.Click += (_, _) => AddWidget(kind);
             AddWidgetMenu.Items.Add(item);
         }
@@ -359,11 +362,69 @@ public sealed partial class MainWindow : Window
 
     private async void OnConfigureRequested(WidgetConfig config)
     {
-        var context = _monitor.Engine.Read((cores: _monitor.LogicalProcessors, gpus: _monitor.Engine.GpuAdapters),
-            static (state, _, history) => new EditorContext(history.ProcessNames.ToList(), state.cores, history.ObjectTypeNames.ToList(), state.gpus));
-        var edited = await WidgetEditor.EditAsync(Content.XamlRoot, config, context);
+        if (config is StackWidgetConfig stack)
+        {
+            await ConfigureStack(stack);
+            return;
+        }
+        var edited = await WidgetEditor.EditAsync(Content.XamlRoot, config, EditorContext());
         if (edited is not null)
             Board.ReplaceWidget(config, edited); // Raises LayoutEdited, which updates the watched patterns.
+    }
+
+    private EditorContext EditorContext() =>
+        _monitor.Engine.Read((cores: _monitor.LogicalProcessors, gpus: _monitor.Engine.GpuAdapters),
+            static (state, _, history) => new EditorContext(history.ProcessNames.ToList(), state.cores, history.ObjectTypeNames.ToList(), state.gpus));
+
+    /// <summary>
+    /// Stack dialog; when it asks to configure an item, that item's editor, then back to the stack dialog (applied or
+    /// cancelled alike) until the stack dialog is closed.
+    /// </summary>
+    private async Task ConfigureStack(StackWidgetConfig stack)
+    {
+        while (true)
+        {
+            if (await StackEditor.EditAsync(Content.XamlRoot, stack) is not { } result)
+                return;
+            var edited = result.Stack;
+            if (edited.Items.Count == 1)
+            {
+                // A single item does not need a stack.
+                var single = edited.Items[0];
+                single.Bounds = edited.Bounds;
+                Board.ReplaceWidget(stack, single);
+                return;
+            }
+            foreach (var item in edited.Items)
+                item.Bounds = edited.Bounds;
+            Board.ReplaceWidget(stack, edited);
+            stack = edited;
+
+            if (result.ConfigureIndex is not { } index)
+                return;
+            var configured = await WidgetEditor.EditAsync(Content.XamlRoot, edited.Items[index], EditorContext());
+            if (configured is null)
+                continue;
+            configured.Bounds = edited.Bounds;
+            edited.Items[index] = configured;
+            Board.ReplaceWidget(edited, edited); // Recreates the content.
+        }
+    }
+
+    /// <summary>Moves a stack's shown item out to the first free spot (stack size, else the item's minimum).</summary>
+    private void Unstack(StackWidgetConfig stack)
+    {
+        var item = stack.Items[stack.CurrentIndex];
+        var bounds = Board.PlacementBounds;
+        var spot = BoardRules.FindFreeSpot(_session.Current.Widgets, new GridSize(stack.Bounds.ColumnSpan, stack.Bounds.RowSpan), bounds.Columns, bounds.Rows)
+                   ?? BoardRules.FindFreeSpot(_session.Current.Widgets, WidgetCatalog.MinSize(item), bounds.Columns, bounds.Rows);
+        if (spot is null)
+        {
+            ShowInfo(InfoBarSeverity.Warning, "No free space", "No room to unstack this widget in the visible board. Enlarge the window or make room.");
+            return;
+        }
+        WidgetStacking.Unstack(_session.Current, stack, stack.CurrentIndex, spot.Value);
+        Board.Rebuild();
     }
 
     // --- Edit session -----------------------------------------------------------------------------
@@ -410,6 +471,31 @@ public sealed partial class MainWindow : Window
             return;
         }
         _session.Current.Widgets.Add(WidgetCatalog.Create(kind, spot.Value));
+        Board.Rebuild();
+        UpdateWatchedPatterns();
+    }
+
+    /// <summary>Copy of a widget (same settings and size) at the first free spot of the visible board.</summary>
+    private void CloneWidget(WidgetConfig config)
+    {
+        var size = new GridSize(config.Bounds.ColumnSpan, config.Bounds.RowSpan);
+        var bounds = Board.PlacementBounds;
+        var spot = BoardRules.FindFreeSpot(_session.Current.Widgets, size, bounds.Columns, bounds.Rows);
+        if (spot is null)
+        {
+            ShowInfo(InfoBarSeverity.Warning, "No free space",
+                $"No room for a {size.Columns}×{size.Rows} copy in the visible board. Enlarge the window or make room.");
+            return;
+        }
+        var clone = Core.Persistence.LayoutStore.Clone(config);
+        clone.Id = Guid.NewGuid();
+        if (clone is StackWidgetConfig stack)
+        {
+            foreach (var item in stack.Items)
+                item.Id = Guid.NewGuid();
+        }
+        clone.Bounds = spot.Value;
+        _session.Current.Widgets.Add(clone);
         Board.Rebuild();
         UpdateWatchedPatterns();
     }

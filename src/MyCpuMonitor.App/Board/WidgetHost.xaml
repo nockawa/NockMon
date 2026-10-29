@@ -5,6 +5,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid
         x:Name="Root"
+        PointerEntered="OnRootPointerEntered"
+        PointerExited="OnRootPointerExited"
         Background="{ThemeResource LayerOnMicaBaseAltFillColorDefaultBrush}"
         BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
         BorderThickness="1"
@@ -16,12 +18,31 @@
 
         <TextBlock
             x:Name="TitleText"
-            Margin="8,4,8,0"
+            Margin="8,4,24,0"
             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
             Style="{StaticResource CaptionTextBlockStyle}"
             TextTrimming="CharacterEllipsis" />
 
         <ContentPresenter x:Name="Body" Grid.Row="1" />
+
+        <!-- Help: shown while the pointer is over the widget (not in edit mode). Hover: summary; click: pinned details. -->
+        <Border
+            x:Name="HelpButton"
+            Grid.RowSpan="2"
+            Width="18"
+            Height="18"
+            Margin="0,3,4,0"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Top"
+            Background="Transparent"
+            IsHitTestVisible="False"
+            Opacity="0"
+            Tapped="OnHelpTapped">
+            <FontIcon
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Glyph="&#xE9CE;" />
+        </Border>
 
         <!-- Edit mode: covers the content (no interaction with it), drag anywhere to move, grip to resize. -->
         <Grid
@@ -36,13 +57,30 @@
             PointerMoved="OnPointerMoved"
             PointerPressed="OnMoveSurfacePressed"
             PointerReleased="OnPointerReleased"
+            PointerWheelChanged="OnEditWheel"
             Visibility="Collapsed">
             <StackPanel
                 Margin="4"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Top"
                 Orientation="Horizontal"
+                PointerEntered="OnButtonsEntered"
+                PointerExited="OnButtonsExited"
                 Spacing="2">
+                <Button
+                    x:Name="UnstackButton"
+                    Padding="6,4"
+                    Click="OnUnstackClick"
+                    ToolTipService.ToolTip="Unstack the shown widget"
+                    Visibility="Collapsed">
+                    <FontIcon FontSize="12" Glyph="&#xE8A7;" />
+                </Button>
+                <Button
+                    Padding="6,4"
+                    Click="OnCloneClick"
+                    ToolTipService.ToolTip="Clone">
+                    <FontIcon FontSize="12" Glyph="&#xE8C8;" />
+                </Button>
                 <Button
                     x:Name="ConfigureButton"
                     Padding="6,4"

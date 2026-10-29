@@ -33,7 +33,10 @@
                     PlaceholderText="Layout"
                     SelectionChanged="OnLayoutPickerSelectionChanged" />
                 <DropDownButton ToolTipService.ToolTip="Manage layouts">
-                    <FontIcon FontSize="14" Glyph="&#xE712;" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="Manage" />
+                        <FontIcon FontSize="14" Glyph="&#xE712;" />
+                    </StackPanel>
                     <DropDownButton.Flyout>
                         <MenuFlyout Placement="BottomEdgeAlignedLeft">
                             <MenuFlyoutItem Click="OnNewLayoutClick" Text="New empty layout…">

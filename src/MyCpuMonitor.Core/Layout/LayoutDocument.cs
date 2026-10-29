@@ -92,6 +92,7 @@ public readonly record struct GridRect(int Column, int Row, int ColumnSpan, int 
 [JsonDerivedType(typeof(ProcessEventsWidgetConfig), "processEvents")]
 [JsonDerivedType(typeof(ObjectTypesWidgetConfig), "objectTypes")]
 [JsonDerivedType(typeof(GpuEnginesWidgetConfig), "gpuEngines")]
+[JsonDerivedType(typeof(StackWidgetConfig), "stack")]
 public abstract class WidgetConfig
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -110,6 +111,9 @@ public sealed class ProcessTableWidgetConfig : WidgetConfig
 
     /// <summary>Optional name pattern; only matching processes are listed.</summary>
     public string? Filter { get; set; }
+
+    /// <summary>Hide the System Idle Process (PID 0).</summary>
+    public bool ExcludeIdle { get; set; }
 
     public List<TableColumnConfig> Columns { get; set; } =
     [
@@ -191,6 +195,26 @@ public sealed class GpuEnginesWidgetConfig : WidgetConfig
 
     /// <summary>Grid columns; 0 = automatic.</summary>
     public int Columns { get; set; }
+}
+
+/// <summary>
+/// Several widgets sharing one board area, one shown at a time. The items' own bounds are ignored (the stack's apply).
+/// Stacks are never nested.
+/// </summary>
+public sealed class StackWidgetConfig : WidgetConfig
+{
+    public List<WidgetConfig> Items { get; set; } = [];
+
+    /// <summary>Seconds between automatic switches to the next item; 0 = manual only.</summary>
+    public int CycleSeconds { get; set; }
+
+    /// <summary>Item shown. Runtime state, not persisted (a layout always opens on the first item).</summary>
+    [JsonIgnore]
+    public int CurrentIndex { get; set; }
+
+    /// <summary>The widgets of <paramref name="widgets"/>, with stacks replaced by their items.</summary>
+    public static IEnumerable<WidgetConfig> Leaves(IEnumerable<WidgetConfig> widgets) =>
+        widgets.SelectMany(w => w is StackWidgetConfig s ? s.Items : [w]);
 }
 
 /// <summary>Kernel objects per type: counts, handles, growth. Objects without handles are held by the kernel.</summary>

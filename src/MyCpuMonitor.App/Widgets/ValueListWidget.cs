@@ -32,7 +32,7 @@ public sealed partial class ValueListWidget : UserControl, IMonitorWidget
         {
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var label = new TextBlock { Text = _items[i].DefaultLabel, FontSize = 12, Foreground = secondary, TextTrimming = TextTrimming.CharacterEllipsis };
-            ToolTipService.SetToolTip(label, _items[i].Info.DisplayName);
+            ToolTipService.SetToolTip(label, Help.DocView.Tooltip(Core.Help.Docs.Of(_items[i])));
             Grid.SetRow(label, i);
             grid.Children.Add(label);
             _values[i] = new TextBlock { FontSize = 12, HorizontalAlignment = HorizontalAlignment.Right };

@@ -25,7 +25,7 @@ public static class LayoutPatterns
             else if (series.Metric == GpuMetric.Utilization && adapters.FirstOrDefault(a => a.Name == series.Adapter) is { HasNvml: false })
                 result.Add((series.Adapter, "*"));
         }
-        foreach (var widget in layout.Widgets.OfType<GpuEnginesWidgetConfig>())
+        foreach (var widget in StackWidgetConfig.Leaves(layout.Widgets).OfType<GpuEnginesWidgetConfig>())
         {
             var adapter = widget.Adapter ?? adapters.FirstOrDefault()?.Name;
             if (adapter is not null)
@@ -34,7 +34,7 @@ public static class LayoutPatterns
         return result;
     }
 
-    private static IEnumerable<SeriesRef> Series(LayoutDocument layout) => layout.Widgets.SelectMany(w => w switch
+    private static IEnumerable<SeriesRef> Series(LayoutDocument layout) => StackWidgetConfig.Leaves(layout.Widgets).SelectMany(w => w switch
     {
         ChartWidgetConfig c => c.Series.Select(s => s.Source),
         ValueWidgetConfig v => [v.Source],

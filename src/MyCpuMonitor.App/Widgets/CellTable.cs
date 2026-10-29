@@ -5,7 +5,10 @@ using Microsoft.UI.Xaml.Media;
 
 namespace MyCpuMonitor.Widgets;
 
-public sealed record CellColumn(string Header, string Tooltip, double Width, bool RightAligned = true, bool Monospace = false);
+/// <param name="Icon">Left-aligned columns only: a 16×16 icon before the text of each cell (<see cref="CellTable.SetIcon"/>).</param>
+/// <param name="Doc">When set, the header tooltip shows its title and summary instead of <paramref name="Tooltip"/>.</param>
+public sealed record CellColumn(string Header, string Tooltip, double Width, bool RightAligned = true, bool Monospace = false, bool Icon = false,
+    Core.Help.Doc? Doc = null);
 
 /// <summary>
 /// Fixed-size text table for tick-rate data: a pool of TextBlocks (rows × columns) built once; per tick only the text
@@ -14,10 +17,12 @@ public sealed record CellColumn(string Header, string Tooltip, double Width, boo
 public sealed partial class CellTable : UserControl
 {
     private const double RowHeight = 20;
+    private const double IconSize = 16;
 
     private readonly CellColumn[] _columns;
     private readonly TextBlock[] _headers;
     private readonly TextBlock[,] _cells;
+    private readonly Image?[,] _icons;
 
     public CellTable(IReadOnlyList<CellColumn> columns, int rows)
     {
@@ -42,6 +47,7 @@ public sealed partial class CellTable : UserControl
         var mono = new FontFamily("Cascadia Mono, Consolas");
         _headers = new TextBlock[_columns.Length];
         _cells = new TextBlock[rows, _columns.Length];
+        _icons = new Image?[rows, _columns.Length];
         for (var c = 0; c < _columns.Length; c++)
         {
             var column = _columns[c];
@@ -55,7 +61,7 @@ public sealed partial class CellTable : UserControl
                 HorizontalAlignment = align,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
-            ToolTipService.SetToolTip(header, column.Tooltip);
+            ToolTipService.SetToolTip(header, column.Doc is { } doc ? Help.DocView.Tooltip(doc) : column.Tooltip);
             var index = c;
             header.Tapped += (_, _) => HeaderTapped?.Invoke(index);
             Grid.SetColumn(header, c);
@@ -74,6 +80,22 @@ public sealed partial class CellTable : UserControl
                 };
                 if (column.Monospace)
                     cell.FontFamily = mono;
+                if (column.Icon)
+                {
+                    var icon = new Image
+                    {
+                        Width = IconSize,
+                        Height = IconSize,
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        IsHitTestVisible = false,
+                    };
+                    Grid.SetRow(icon, r + 1);
+                    Grid.SetColumn(icon, c);
+                    grid.Children.Add(icon);
+                    _icons[r, c] = icon;
+                    cell.Margin = new Thickness(IconSize + 4, 0, 0, 0);
+                }
                 Grid.SetRow(cell, r + 1);
                 Grid.SetColumn(cell, c);
                 grid.Children.Add(cell);
@@ -105,13 +127,23 @@ public sealed partial class CellTable : UserControl
             cell.Text = text;
     }
 
+    /// <summary>Sets a cell's icon (icon columns only); no-op when unchanged.</summary>
+    public void SetIcon(int row, int column, ImageSource? source)
+    {
+        if (_icons[row, column] is { } icon && !ReferenceEquals(icon.Source, source))
+            icon.Source = source;
+    }
+
     /// <summary>Clears the rows from <paramref name="firstRow"/> on.</summary>
     public void ClearFrom(int firstRow)
     {
         for (var r = firstRow; r < RowCount; r++)
         {
             for (var c = 0; c < ColumnCount; c++)
+            {
                 SetCell(r, c, "");
+                SetIcon(r, c, null);
+            }
         }
     }
 

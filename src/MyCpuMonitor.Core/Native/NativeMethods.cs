@@ -46,6 +46,10 @@ internal static unsafe partial class Kernel32
     [LibraryImport("kernel32.dll")]
     public static partial nint GetCurrentProcess();
 
+    [LibraryImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool QueryFullProcessImageName(nint process, uint flags, char* exeName, uint* size);
+
     [LibraryImport("kernel32.dll")]
     public static partial nint OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
 

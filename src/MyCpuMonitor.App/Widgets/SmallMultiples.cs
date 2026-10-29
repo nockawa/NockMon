@@ -22,7 +22,8 @@ public static class SmallMultiples
     };
 
     public static void Draw(CanvasDrawingSession ds, Size size, IReadOnlyList<SeriesData> cells, IReadOnlyList<SeriesData>? overlay,
-        int windowSamples, double yMax, int fixedColumns, Color fill, Color overlayFill, ElementTheme theme, Func<SeriesData, string> formatValue)
+        int windowSamples, double yMax, int fixedColumns, Color fill, Color overlayFill, ElementTheme theme, Func<SeriesData, string> formatValue,
+        Color? stroke = null, Color? overlayStroke = null)
     {
         var (columns, rows) = GridArrangement.Arrange(cells.Count, size.Width, size.Height, fixedColumns);
         if (columns == 0)
@@ -43,9 +44,9 @@ public static class SmallMultiples
             var y = (i / columns) * (cellHeight + Gap);
             var cell = new Rect(x, y, cellWidth, cellHeight);
             var series = cells[i];
-            ChartRenderer.FillArea(ds, cell, series.Values.AsSpan(0, series.Count), windowSamples, yMax, fill);
+            ChartRenderer.FillArea(ds, cell, series.Values.AsSpan(0, series.Count), windowSamples, yMax, fill, stroke);
             if (overlay is not null && i < overlay.Count)
-                ChartRenderer.FillArea(ds, cell, overlay[i].Values.AsSpan(0, overlay[i].Count), windowSamples, yMax, overlayFill);
+                ChartRenderer.FillArea(ds, cell, overlay[i].Values.AsSpan(0, overlay[i].Count), windowSamples, yMax, overlayFill, overlayStroke);
             // Border last, inset half a pixel so the 1 px line is crisp and drawn over the area's edge.
             ds.DrawRectangle(x + 0.5f, y + 0.5f, cellWidth - 1, cellHeight - 1, border, 1);
 

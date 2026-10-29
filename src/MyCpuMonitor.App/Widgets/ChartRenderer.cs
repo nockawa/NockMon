@@ -138,8 +138,10 @@ public static class ChartRenderer
     /// <summary>
     /// Filled area (to zero) of one series, newest sample at the right edge, built as a single polygon (one interop call)
     /// and downsampled to at most one point per pixel column (bucket maximum, so spikes stay visible). For small multiples.
+    /// With <paramref name="stroke"/>, the top edge is also drawn as a 1 px line.
     /// </summary>
-    internal static void FillArea(CanvasDrawingSession ds, Rect plot, ReadOnlySpan<float> values, int windowSamples, double yMax, Windows.UI.Color color)
+    internal static void FillArea(CanvasDrawingSession ds, Rect plot, ReadOnlySpan<float> values, int windowSamples, double yMax, Windows.UI.Color color,
+        Windows.UI.Color? stroke = null)
     {
         if (values.Length < 2 || plot.Width < 2 || plot.Height < 2)
             return;
@@ -170,8 +172,18 @@ public static class ChartRenderer
         polygon[n++] = new Vector2(right, bottom);
         polygon[n++] = new Vector2(polygon[0].X, bottom);
 
-        using var geometry = CanvasGeometry.CreatePolygon(ds, polygon);
-        ds.FillGeometry(geometry, color);
+        using (var geometry = CanvasGeometry.CreatePolygon(ds, polygon))
+            ds.FillGeometry(geometry, color);
+
+        if (stroke is null || points < 2)
+            return;
+        using var builder = new CanvasPathBuilder(ds);
+        builder.BeginFigure(polygon[0]);
+        for (var k = 1; k < points; k++)
+            builder.AddLine(polygon[k]);
+        builder.EndFigure(CanvasFigureLoop.Open);
+        using var line = CanvasGeometry.CreatePath(builder);
+        ds.DrawGeometry(line, stroke.Value, 1);
     }
 
     private static double ComputeMax(IReadOnlyList<SeriesData> series, MetricUnit unit, bool stacked, MonitorService monitor)

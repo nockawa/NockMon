@@ -35,7 +35,7 @@ public sealed partial class DriverTableWidget : UserControl, IMonitorWidget
     {
         _config = config;
         _monitor = monitor;
-        _table = new CellTable(Columns.Select(c => c.Column).ToArray(), config.TopCount);
+        _table = new CellTable(Columns.Select(c => c.Column with { Doc = Core.Help.Docs.Of(c.Field) }).ToArray(), config.TopCount);
         _table.HeaderTapped += column => SortBy(Columns[column].Field);
         Content = _table;
         UpdateSortIndicator();

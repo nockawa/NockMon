@@ -104,6 +104,17 @@ public class NativeSystemProbeTests
     }
 
     [Fact]
+    public void ProcessImage_ResolvesOwnPath_AndRejectsWrongIdentity()
+    {
+        using var current = Process.GetCurrentProcess();
+        var createTime = current.StartTime.ToUniversalTime().ToFileTimeUtc();
+
+        Assert.Equal(Environment.ProcessPath, ProcessImage.TryGetPath(Environment.ProcessId, createTime), ignoreCase: true);
+        Assert.Null(ProcessImage.TryGetPath(Environment.ProcessId, createTime + 1));
+        Assert.Null(ProcessImage.TryGetPath(4, 0)); // System: no image file.
+    }
+
+    [Fact]
     public void Engine_MeasuresBusyThreadCpu_InScanAndWatched()
     {
         using var probe = new NativeSystemProbe();

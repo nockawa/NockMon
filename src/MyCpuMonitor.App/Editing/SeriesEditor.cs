@@ -1,7 +1,9 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using MyCpuMonitor.Core.Gpu;
+using MyCpuMonitor.Core.Help;
 using MyCpuMonitor.Core.Metrics;
+using MyCpuMonitor.Help;
 using MyCpuMonitor.Widgets;
 
 namespace MyCpuMonitor.Editing;
@@ -27,6 +29,7 @@ internal sealed class SeriesEditor : StackPanel
     private readonly AutoSuggestBox _engine = new() { Header = "Engine pattern", PlaceholderText = "Compute*; 3D; Video*", MinWidth = 200 };
     private readonly TextBox _label = new() { Header = "Label", PlaceholderText = "Automatic", MinWidth = 160 };
     private readonly ComboBox _color = new() { Header = "Color", MinWidth = 120 };
+    private readonly DocPanel _doc = new();
 
     public SeriesEditor(SeriesRef source, string? label, string? color, EditorContext context, bool showLabelAndColor)
     {
@@ -41,7 +44,11 @@ internal sealed class SeriesEditor : StackPanel
             _scope.Items.Add(new ComboBoxItem { Content = ScopeName(scope), Tag = scope });
         }
         _scope.SelectionChanged += (_, _) => OnScopeChanged();
-        _metric.SelectionChanged += (_, _) => UpdateTargets();
+        _metric.SelectionChanged += (_, _) =>
+        {
+            UpdateTargets();
+            _doc.Show((_metric.SelectedItem as ComboBoxItem)?.Tag is { } metric ? DocOf(metric) : null);
+        };
         foreach (var gpu in context.Gpus)
             _adapter.Items.Add(new ComboBoxItem { Content = gpu.HasNvml ? $"{gpu.Name} (NVML)" : gpu.Name, Tag = gpu });
 
@@ -71,6 +78,7 @@ internal sealed class SeriesEditor : StackPanel
 
         Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _scope, _adapter, _metric } });
         Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _core, _pattern, _objectType, _engine } });
+        Children.Add(_doc);
         if (showLabelAndColor)
             Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _label, _color } });
 
@@ -183,7 +191,11 @@ internal sealed class SeriesEditor : StackPanel
             _ => Enum.GetValues<GpuMetric>().Select(m => ((object)m, MetricCatalog.Get(m))),
         };
         foreach (var (value, info) in metrics)
-            _metric.Items.Add(new ComboBoxItem { Content = info.DisplayName, Tag = value });
+        {
+            var item = new ComboBoxItem { Content = info.DisplayName, Tag = value };
+            ToolTipService.SetToolTip(item, DocView.Tooltip(DocOf(value)));
+            _metric.Items.Add(item);
+        }
         _metric.SelectedItem = _metric.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Content == previous) ?? _metric.Items[0];
         UpdateTargets();
     }
@@ -197,6 +209,16 @@ internal sealed class SeriesEditor : StackPanel
         _adapter.Visibility = Show(scope == Scope.Gpu);
         _engine.Visibility = Show(scope == Scope.Gpu && (_metric.SelectedItem as ComboBoxItem)?.Tag is GpuMetric.Engine);
     }
+
+    private static Doc DocOf(object metric) => metric switch
+    {
+        SystemMetric m => Docs.Of(m),
+        CoreMetric m => Docs.Of(m),
+        ProcessField f => Docs.Of(f),
+        ObjectTypeMetric m => Docs.Of(m),
+        GpuMetric m => Docs.Of(m),
+        _ => throw new ArgumentException($"Unknown metric {metric}.", nameof(metric)),
+    };
 
     private static Visibility Show(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
 

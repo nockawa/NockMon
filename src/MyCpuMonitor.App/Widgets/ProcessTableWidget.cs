@@ -26,7 +26,8 @@ public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
         _config = config;
         _monitor = monitor;
         var columns = config.Columns
-            .Select(c => new CellColumn(MetricCatalog.Get(c.Field).ShortName, MetricCatalog.Get(c.Field).DisplayName, c.Width, IsRightAligned(c.Field)))
+            .Select(c => new CellColumn(MetricCatalog.Get(c.Field).ShortName, MetricCatalog.Get(c.Field).DisplayName, c.Width, IsRightAligned(c.Field),
+                Icon: c.Field == ProcessField.Name, Doc: Core.Help.Docs.Of(c.Field)))
             .ToArray();
         _table = new CellTable(columns, config.TopCount);
         _table.HeaderTapped += column => SortBy(_config.Columns[column].Field);
@@ -39,7 +40,7 @@ public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
     public void Refresh()
     {
         // The table only changes with a new scan (slower than samples), a sort change or a display setting change.
-        var options = new ProcessQueryOptions(_config.SortBy, _config.Descending, _config.TopCount, _config.GroupByName, _config.Filter);
+        var options = new ProcessQueryOptions(_config.SortBy, _config.Descending, _config.TopCount, _config.GroupByName, _config.Filter, _config.ExcludeIdle);
         var ran = _monitor.Engine.Read((widget: this, options), static (state, snapshot, _) =>
         {
             var w = state.widget;
@@ -57,10 +58,15 @@ public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
         // Results are owned by the query: read them outside the engine lock.
         var rows = _query.Results;
         var columns = _config.Columns;
+        var iconPixels = (int)Math.Round(16 * (XamlRoot?.RasterizationScale ?? 1));
         for (var r = 0; r < rows.Length && r < _table.RowCount; r++)
         {
             for (var c = 0; c < columns.Count; c++)
+            {
                 _table.SetCell(r, c, FormatCell(in rows[r], columns[c].Field));
+                if (columns[c].Field == ProcessField.Name)
+                    _table.SetIcon(r, c, ProcessIcons.Get(rows[r].Stats.Pid, rows[r].Stats.CreateTime, iconPixels));
+            }
         }
         _table.ClearFrom(rows.Length);
     }

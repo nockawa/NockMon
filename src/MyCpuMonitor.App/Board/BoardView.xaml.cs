@@ -9,6 +9,7 @@ namespace MyCpuMonitor.Board;
 /// <summary>
 /// The widget surface. Positions widgets from their cell bounds; in edit mode shows the cell grid and
 /// handles move/resize with a snapped preview (green: valid, red: collision or out of the visible board).
+/// Dropping a widget with the pointer over another one stacks them (accent preview over the target).
 /// The window size only changes how many cells are visible: widgets keep their cells.
 /// </summary>
 public sealed partial class BoardView : UserControl
@@ -19,6 +20,8 @@ public sealed partial class BoardView : UserControl
     private static readonly Brush ValidStroke = new SolidColorBrush(ColorHelper.FromArgb(0xFF, 0x00, 0xC0, 0x60));
     private static readonly Brush InvalidFill = new SolidColorBrush(ColorHelper.FromArgb(0x30, 0xE0, 0x30, 0x30));
     private static readonly Brush InvalidStroke = new SolidColorBrush(ColorHelper.FromArgb(0xFF, 0xE0, 0x30, 0x30));
+    private static readonly Brush StackFill = new SolidColorBrush(Widgets.Palette.WithAlpha((Windows.UI.Color)Application.Current.Resources["SystemAccentColor"], 0x40));
+    private static readonly Brush StackStroke = new SolidColorBrush((Windows.UI.Color)Application.Current.Resources["SystemAccentColor"]);
 
     private readonly List<WidgetHost> _hosts = [];
     private LayoutDocument? _layout;
@@ -33,6 +36,9 @@ public sealed partial class BoardView : UserControl
         public readonly GridRect Origin = host.Config.Bounds;
         public GridRect Candidate = host.Config.Bounds;
         public bool IsValid = true;
+
+        /// <summary>Widget under the pointer during a move: the drop stacks onto it.</summary>
+        public WidgetConfig? StackTarget;
     }
 
     public BoardView()
@@ -51,6 +57,12 @@ public sealed partial class BoardView : UserControl
 
     /// <summary>Raised when the user asks to configure a widget.</summary>
     internal event Action<WidgetConfig>? ConfigureRequested;
+
+    /// <summary>Raised when the user asks to clone a widget.</summary>
+    internal event Action<WidgetConfig>? CloneRequested;
+
+    /// <summary>Raised when the user asks to move a stack's shown item out of it.</summary>
+    internal event Action<StackWidgetConfig>? UnstackRequested;
 
     /// <summary>Pulls fresh data into every widget.</summary>
     public void RefreshWidgets()
@@ -138,6 +150,12 @@ public sealed partial class BoardView : UserControl
         host.DragCompleted += OnDragCompleted;
         host.DeleteRequested += OnDeleteRequested;
         host.ConfigureRequested += h => ConfigureRequested?.Invoke(h.Config);
+        host.CloneRequested += h => CloneRequested?.Invoke(h.Config);
+        host.UnstackRequested += h =>
+        {
+            if (h.Config is StackWidgetConfig stack)
+                UnstackRequested?.Invoke(stack);
+        };
         _hosts.Add(host);
         Surface.Children.Insert(1, host); // Above the grid lines, below the preview.
         Place(host, widget.Bounds);
@@ -214,11 +232,20 @@ public sealed partial class BoardView : UserControl
             return;
 
         var origin = _geometry.ToPixels(_drag.Origin);
+        _drag.StackTarget = null;
         if (_drag.Kind == DragKind.Move)
         {
             _drag.Candidate = _geometry.Move(_drag.Origin, dx, dy);
             Canvas.SetLeft(host, origin.X + dx);
             Canvas.SetTop(host, origin.Y + dy);
+
+            if (HostAt(host.DragStart.X + dx, host.DragStart.Y + dy, host) is { } target)
+            {
+                _drag.StackTarget = target.Config;
+                _drag.IsValid = WidgetStacking.CanStack(_layout, host.Config, target.Config);
+                ShowPreview(target.Config.Bounds, _drag.IsValid, stack: true);
+                return;
+            }
         }
         else
         {
@@ -239,7 +266,16 @@ public sealed partial class BoardView : UserControl
         if (_drag?.Host != host)
             return;
 
-        var changed = _drag.IsValid && _drag.Candidate != _drag.Origin;
+        if (_drag.StackTarget is { } target && _drag.IsValid && _layout is not null)
+        {
+            _drag = null;
+            WidgetStacking.Stack(_layout, host.Config, target);
+            Rebuild();
+            LayoutEdited?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        var changed = _drag.StackTarget is null && _drag.IsValid && _drag.Candidate != _drag.Origin;
         if (changed)
             host.Config.Bounds = _drag.Candidate;
         _drag = null;
@@ -265,15 +301,27 @@ public sealed partial class BoardView : UserControl
         LayoutEdited?.Invoke(this, EventArgs.Empty);
     }
 
-    private void ShowPreview(GridRect bounds, bool valid)
+    /// <summary>Host (other than <paramref name="except"/>) under a surface point.</summary>
+    private WidgetHost? HostAt(double x, double y, WidgetHost except)
+    {
+        foreach (var h in _hosts)
+        {
+            var px = _geometry.ToPixels(h.Config.Bounds);
+            if (h != except && x >= px.X && y >= px.Y && x < px.X + px.Width && y < px.Y + px.Height)
+                return h;
+        }
+        return null;
+    }
+
+    private void ShowPreview(GridRect bounds, bool valid, bool stack = false)
     {
         var px = _geometry.ToPixels(bounds);
         Canvas.SetLeft(Preview, px.X);
         Canvas.SetTop(Preview, px.Y);
         Preview.Width = px.Width;
         Preview.Height = px.Height;
-        Preview.Fill = valid ? ValidFill : InvalidFill;
-        Preview.Stroke = valid ? ValidStroke : InvalidStroke;
+        Preview.Fill = !valid ? InvalidFill : stack ? StackFill : ValidFill;
+        Preview.Stroke = !valid ? InvalidStroke : stack ? StackStroke : ValidStroke;
         Preview.Visibility = Visibility.Visible;
     }
 }

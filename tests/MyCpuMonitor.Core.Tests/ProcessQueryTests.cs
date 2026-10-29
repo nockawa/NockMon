@@ -51,6 +51,14 @@ public class ProcessQueryTests
     }
 
     [Fact]
+    public void ExcludeIdle_SkipsPidZero()
+    {
+        var snapshot = Snap((0, "Idle", 30, 0), (2, "code.exe", 2.0, 100), (4, "idle.exe", 0, 50));
+        var rows = new ProcessQuery().Run(snapshot, new ProcessQueryOptions(ProcessField.Cpu, true, 10, ExcludeIdle: true));
+        Assert.Equal([2, 4], rows.ToArray().Select(r => r.Stats.Pid));
+    }
+
+    [Fact]
     public void Filter_UsesNamePattern()
     {
         var rows = new ProcessQuery().Run(Sample, new ProcessQueryOptions(ProcessField.Cpu, true, 10, Filter: "chrome;idle"));

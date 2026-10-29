@@ -20,8 +20,11 @@ namespace MyCpuMonitor.Widgets;
 public sealed partial class CpuGridWidget : UserControl, IMonitorWidget
 {
     private static readonly Color KernelColor = Palette.Series[1];
-    private static readonly Color MainFill = Palette.WithAlpha(Palette.Series[0], 0xA0);
-    private static readonly Color KernelFill = Palette.WithAlpha(KernelColor, 0xC0);
+    // Light fill, top edge outlined in the stronger tone.
+    private static readonly Color MainFill = Palette.WithAlpha(Palette.Series[0], 0x40);
+    private static readonly Color MainStroke = Palette.WithAlpha(Palette.Series[0], 0xA0);
+    private static readonly Color KernelFill = Palette.WithAlpha(KernelColor, 0x50);
+    private static readonly Color KernelStroke = Palette.WithAlpha(KernelColor, 0xC0);
 
     private readonly MonitorService _monitor;
     private readonly CpuGridWidgetConfig _config;
@@ -71,7 +74,7 @@ public sealed partial class CpuGridWidget : UserControl, IMonitorWidget
     {
         var isFraction = MetricCatalog.Get(_config.Metric).Unit == MetricUnit.Cpu;
         SmallMultiples.Draw(args.DrawingSession, new Windows.Foundation.Size(sender.ActualWidth, sender.ActualHeight), _main, _kernel.Length > 0 ? _kernel : null, _windowSamples,
-            isFraction ? 1.0 : SharedMax(), _config.Columns, MainFill, KernelFill, ActualTheme, s => FormatValue(s, isFraction));
+            isFraction ? 1.0 : SharedMax(), _config.Columns, MainFill, KernelFill, ActualTheme, s => FormatValue(s, isFraction), MainStroke, KernelStroke);
     }
 
     private string FormatValue(SeriesData series, bool isFraction)
