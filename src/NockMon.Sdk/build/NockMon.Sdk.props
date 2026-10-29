@@ -1,0 +1,17 @@
+<Project>
+
+  <!-- Defaults making the referencing project a NockMon plugin. The project may override any of them. -->
+  <PropertyGroup>
+    <!-- Plugin API version this SDK implements (PluginApi.Version): checked by the host at load. -->
+    <NockMonPluginApiVersion>1.0</NockMonPluginApiVersion>
+
+    <PackageType Condition="'$(PackageType)' == ''">NockMonPlugin</PackageType>
+    <!-- Dependencies are copied next to the plugin and resolved by its own load context. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- The package carries the plugin folder (plugin\), not lib\, and no NuGet dependencies. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5100;NU5128</NoWarn>
+  </PropertyGroup>
+
+</Project>

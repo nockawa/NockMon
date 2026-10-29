@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MyCpuMonitor dotTrace Profile Analyzer (adapted from Typhon)
+NockMon dotTrace Profile Analyzer (adapted from Typhon)
 Parses dotTrace Reporter XML output and produces actionable performance reports.
 
 Usage:
@@ -129,7 +129,7 @@ def top_by_total_time(profile: Profile, n: int = 15, filter_pattern: str = None)
 
 
 def operation_breakdown(profile: Profile) -> dict[str, dict]:
-    """Break down time by MyCpuMonitor pipeline stage (first matching pattern in the call stack wins)."""
+    """Break down time by NockMon pipeline stage (first matching pattern in the call stack wins)."""
     ops = defaultdict(lambda: {"total_time": 0.0, "own_time": 0.0, "samples": 0, "children": defaultdict(float)})
 
     # Order matters: the most specific stage first.
@@ -402,7 +402,7 @@ def profile_to_json(profile: Profile, n: int = 30, filter_pattern: str = None) -
 # --- Main -------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="MyCpuMonitor dotTrace Profile Analyzer (adapted from Typhon)")
+    parser = argparse.ArgumentParser(description="NockMon dotTrace Profile Analyzer (adapted from Typhon)")
     parser.add_argument("report", help="Path to dotTrace Reporter XML file")
     parser.add_argument("--compare", metavar="CURRENT", help="Compare with a second profile XML")
     parser.add_argument("--top", type=int, default=15, help="Number of top functions to show (default: 15)")

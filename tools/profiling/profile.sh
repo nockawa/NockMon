@@ -17,11 +17,11 @@ REPORTER=$(ls -d "$USERPROFILE"/.nuget/packages/jetbrains.dottrace.commandlineto
 mkdir -p "$OUT"
 
 echo "== Build (Release, ProfilingBuild)"
-dotnet build "$ROOT/src/MyCpuMonitor.App" -c Release -r win-x64 -p:ProfilingBuild=true -o "$BUILD" -v q -nologo | grep -E " error |Build succeeded" || true
-[ -f "$BUILD/MyCpuMonitor.exe" ] || { echo "build failed"; exit 1; }
+dotnet build "$ROOT/src/NockMon.App" -c Release -r win-x64 -p:ProfilingBuild=true -o "$BUILD" -v q -nologo | grep -E " error |Build succeeded" || true
+[ -f "$BUILD/NockMon.exe" ] || { echo "build failed"; exit 1; }
 
 echo "== Profile: ${WARMUP}s warm-up, ${COLLECT}s collection ($MEASURE)"
-export DOTNET_ROLL_FORWARD=LatestMajor MYCPUMON_SKIP_ELEVATION=1
+export DOTNET_ROLL_FORWARD=LatestMajor NOCKMON_SKIP_ELEVATION=1
 {
   sleep "$WARMUP"
   echo '##dotTrace["start"]'
@@ -31,12 +31,12 @@ export DOTNET_ROLL_FORWARD=LatestMajor MYCPUMON_SKIP_ELEVATION=1
   echo '##dotTrace["disconnect"]'
 } | dottrace start --profiling-type=Sampling --time-measurement="$MEASURE" \
       --collect-data-from-start=off --service-input=stdin --service-output=on \
-      --save-to="$OUT/$NAME.dtp" --overwrite -- "$BUILD/MyCpuMonitor.exe" &
+      --save-to="$OUT/$NAME.dtp" --overwrite -- "$BUILD/NockMon.exe" &
 DT=$!
 
 sleep $((WARMUP + COLLECT + 8))
 # The app keeps running after disconnect: close it.
-powershell.exe -NoProfile -Command "Get-Process MyCpuMonitor -ErrorAction SilentlyContinue | Where-Object { \$_.Path -like '*profiling*' } | Stop-Process" || true
+powershell.exe -NoProfile -Command "Get-Process NockMon -ErrorAction SilentlyContinue | Where-Object { \$_.Path -like '*profiling*' } | Stop-Process" || true
 wait $DT || true
 
 SNAP=$(ls -t "$OUT"/"$NAME"*.dtp 2>/dev/null | head -1)

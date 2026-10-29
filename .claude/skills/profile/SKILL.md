@@ -1,10 +1,10 @@
 ---
 name: profile
-description: Profile the steady state of the MyCpuMonitor WinUI app with dotTrace sampling (CPU time), generate XML reports, and analyze hot spots per pipeline stage
+description: Profile the steady state of the NockMon WinUI app with dotTrace sampling (CPU time), generate XML reports, and analyze hot spots per pipeline stage
 argument-hint: <name> [--warmup S] [--collect S] [--measure ThreadCycleTime|ThreadTime|PerformanceCounter] [--compare <baseline-report.xml>] [--filter <regex>] [--callers <method>]
 ---
 
-# dotTrace profiling (MyCpuMonitor)
+# dotTrace profiling (NockMon)
 
 Adapted from the Typhon `/profile` skill. Steady-state CPU profiling of a GUI app that is idle most of the time.
 
@@ -13,7 +13,7 @@ Adapted from the Typhon `/profile` skill. Steady-state CPU profiling of a GUI ap
 - `dottrace`: global tool (`JetBrains.dotTrace.GlobalTools`), needs `DOTNET_ROLL_FORWARD=LatestMajor` (set by the script).
 - `Reporter.exe`: `%USERPROFILE%\.nuget\packages\jetbrains.dottrace.commandlinetools.windows-x64\<latest>\tools\Reporter.exe` (found automatically).
 - `tools/profiling/profile.sh <name> [warmup=15] [collect=30] [measure=ThreadTime]`: builds Release with `-p:ProfilingBuild=true`
-  (optimized, honors `MYCPUMON_SKIP_ELEVATION=1` since profilers run non-elevated), launches under dottrace with collection off,
+  (optimized, honors `NOCKMON_SKIP_ELEVATION=1` since profilers run non-elevated), launches under dottrace with collection off,
   starts collecting after the warm-up via `##dotTrace["start"]` on stdin, snapshots, closes the app, then writes
   `tools/profiling/out/<name>-report.xml` (app frames, `app-pattern.xml`) and `<name>-all.xml` (all frames).
 - `tools/profiling/analyze_profile.py <report.xml> [--top N] [--filter X] [--callers M] [--compare other.xml] [--json]`:

@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NockMon.App/NockMon.App.csproj" />
+    <Project Path="src/NockMon.Core/NockMon.Core.csproj" />
+    <Project Path="src/NockMon.Launcher/NockMon.Launcher.csproj" />
+    <Project Path="src/NockMon.Sdk/NockMon.Sdk.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NockMon.Core.Tests/NockMon.Core.Tests.csproj" />
+  </Folder>
+</Solution>
