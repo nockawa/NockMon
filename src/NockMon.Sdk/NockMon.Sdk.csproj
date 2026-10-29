@@ -19,9 +19,14 @@
     <!-- Major.minor is the plugin API version (PluginApi.Version): keep them in sync. -->
     <Version>1.0.0</Version>
     <Authors>Loïc Baumann</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Copyright>Copyright (c) 2026 Loïc Baumann</Copyright>
     <Description>SDK to write widget plugins for NockMon (nockmon): plugin interfaces and packaging. Reference it with PrivateAssets="all" and pack: the package is a plugin.</Description>
     <PackageTags>nockmon;plugin;sdk;widget;winui</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/nockawa/NockMon/blob/main/docs/plugins.md</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nockawa/NockMon</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 
   <ItemGroup>

@@ -163,3 +163,8 @@ Details, packaging and the repository layout are in [Building from source](docs/
 NockMon sends nothing anywhere. Everything it measures stays on your machine, in memory. The only network access is
 the Plugins dialog (it lists and downloads packages from the sources you configure), and the MCP server is a local named
 pipe, off unless you turn it on.
+
+## License
+
+[MIT](LICENSE). The bundled [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) font is MIT
+licensed by Microsoft.

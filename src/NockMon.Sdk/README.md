@@ -1,6 +1,7 @@
 # NockMon.Sdk
 
-Write widget plugins for **NockMon** (`dotnet tool install -g NockMon`).
+Write widget plugins for **NockMon** (`dotnet tool install -g NockMon`). Full guide and API reference:
+[Plugin development](https://github.com/nockawa/NockMon/blob/main/docs/plugins.md).
 
 ## A plugin in four steps
 

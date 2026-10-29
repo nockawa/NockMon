@@ -17,10 +17,21 @@
     <ToolPackageRuntimeIdentifiers>win-x64;win-arm64</ToolPackageRuntimeIdentifiers>
     <RuntimeIdentifiers>$(ToolPackageRuntimeIdentifiers)</RuntimeIdentifiers>
     <PackageId>NockMon</PackageId>
-    <Version>0.8.2</Version>
+    <Version>1.0.0</Version>
     <Authors>Loïc Baumann</Authors>
-    <Description>NockMon - configurable tile-based workstation monitor (Windows only).</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Copyright>Copyright (c) 2026 Loïc Baumann</Copyright>
+    <Description>Configurable tile-based system monitor for Windows: per-CPU, processes, GPU and kernel diagnostics (DPC/ISR latency per driver, pool tags, kernel objects), an hour of history, widget plugins, and an MCP server for AI agents.</Description>
+    <PackageTags>monitor;system-monitor;performance;task-manager;windows;etw;dpc;latency;gpu;winui;mcp</PackageTags>
+    <PackageProjectUrl>https://github.com/nockawa/NockMon</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nockawa/NockMon</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <PropertyGroup>
     <_AppProject>$(MSBuildThisFileDirectory)..\NockMon.App\NockMon.App.csproj</_AppProject>
