@@ -15,8 +15,9 @@
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <WindowsPackageType>None</WindowsPackageType>
-    <!-- Self-contained WinAppSDK requires a RID (build with -r win-x64 / win-arm64). -->
-    <WindowsAppSDKSelfContained Condition="'$(RuntimeIdentifier)' != ''">true</WindowsAppSDKSelfContained>
+    <!-- Self-contained WinAppSDK and Win2D require a RID: builds without one (IDE "Any CPU", plain dotnet build) use the SDK's (win-x64 / win-arm64). -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <!-- Custom Main: elevation gate must run before any XAML initialization. -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <!-- -p:ProfilingBuild=true: optimized build that honors NOCKMON_SKIP_ELEVATION (profilers run non-elevated). Never ship it. -->
@@ -45,6 +46,22 @@
     <!-- RID-agnostic library: without the per-RID publish folder, the launcher's parallel win-x64/win-arm64 publishes build it once. -->
     <ProjectReference Include="..\NockMon.Sdk\NockMon.Sdk.csproj" GlobalPropertiesToRemove="PublishDir" />
   </ItemGroup>
+
+  <!-- TraceEvent's native/interop DLLs, same treatment (its props add them as links at the root). -->
+  <ItemGroup>
+    <None Update="$(NuGetPackageRoot)microsoft.diagnostics.tracing.traceevent\**\*.dll" TargetPath="%(Link)" Link="TraceEvent\%(Link)" />
+  </ItemGroup>
+
+  <!-- Self-contained WinAppSDK payload (runtime DLLs, a .mui folder per language): one IDE folder instead of ~100 links at the
+       project root. Link only drives the IDE tree here; TargetPath keeps the output layout. -->
+  <Target Name="GroupWindowsAppSDKPayload" AfterTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents">
+    <ItemGroup>
+      <None Remove="@(MicrosoftWindowsAppSDKFiles)" />
+      <None Include="@(MicrosoftWindowsAppSDKFiles)" CopyToOutputDirectory="PreserveNewest"
+            TargetPath="%(MicrosoftWindowsAppSDKFiles.RecursiveDir)%(MicrosoftWindowsAppSDKFiles.Filename)%(MicrosoftWindowsAppSDKFiles.Extension)"
+            Link="WindowsAppSDK\%(MicrosoftWindowsAppSDKFiles.RecursiveDir)%(MicrosoftWindowsAppSDKFiles.Filename)%(MicrosoftWindowsAppSDKFiles.Extension)" />
+    </ItemGroup>
+  </Target>
 
   <!-- Unpackaged publish omits the project .pri (compiled XAML + resources); the MSIX tooling only ships it in packages. -->
   <Target Name="PublishProjectPri" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="'$(AppxPackage)' != 'true'">
