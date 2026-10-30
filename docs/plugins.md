@@ -14,6 +14,9 @@ A plugin adds widget kinds to NockMon: anything you can draw with WinUI and comp
 build queue, a sensor, your own application's counters. Plugin widgets live on the board like built-in ones: move,
 resize, stack, configure, save in layouts.
 
+A complete plugin to read alongside this guide, or to copy: [Claude Usage](../samples/ClaudeUsage.NockMon) (public
+domain).
+
 ## Using plugins
 
 Open **Plugins** in the toolbar:

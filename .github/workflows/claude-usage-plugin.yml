@@ -1,0 +1,75 @@
+# The Claude Usage plugin sample (samples/ClaudeUsage.NockMon), versioned apart from NockMon.
+# Pushing a tag claude-usage-v<major>.<minor>.<patch> packs it and, once approved on the release environment, publishes
+# it on nuget.org (trusted publishing). Pull requests touching it only build and pack.
+name: Claude Usage plugin
+
+on:
+  push:
+    tags: ['claude-usage-v*']
+  pull_request:
+    branches: [main]
+    paths: ['samples/ClaudeUsage.NockMon/**', '.github/workflows/claude-usage-plugin.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:GITHUB_REF_NAME -notmatch '^claude-usage-v(\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?)$') {
+              throw "Tag $env:GITHUB_REF_NAME is not claude-usage-v<major>.<minor>.<patch>[-<prerelease>]."
+            }
+            "version=$($Matches[1])" >> $env:GITHUB_OUTPUT
+          } else {
+            "version=$(([xml](Get-Content samples/ClaudeUsage.NockMon/ClaudeUsage.NockMon.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Pack
+        run: dotnet pack samples/ClaudeUsage.NockMon -c Release -o artifacts "-p:Version=${{ steps.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plugin
+          path: artifacts/*.nupkg
+          if-no-files-found: error
+
+  publish:
+    needs: pack
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: windows-2025
+    environment: release
+    permissions:
+      id-token: write   # nuget.org trusted publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: plugin
+          path: artifacts
+
+      - name: NuGet login
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: nockawa
+
+      - name: NuGet push
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}
+        run: |
+          foreach ($package in Get-ChildItem artifacts/*.nupkg) {
+            dotnet nuget push $package.FullName --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate
+            if ($LASTEXITCODE -ne 0) { throw "Push of $($package.Name) failed ($LASTEXITCODE)." }
+          }

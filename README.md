@@ -139,7 +139,8 @@ Setup for other clients, the tool list and the security model are in [AI agents]
 Plugins add widget kinds. Open **Plugins** in the toolbar to browse the plugins published on nuget.org (or your own
 feeds and folders), install, update and uninstall them.
 
-Writing one takes a class library, a package reference and two small classes: see the [plugin guide](docs/plugins.md).
+Writing one takes a class library, a package reference and two small classes: see the [plugin guide](docs/plugins.md)
+and a complete example, [Claude Usage](samples/ClaudeUsage.NockMon) (your Claude subscription's weekly usage).
 
 > Plugins run inside NockMon, with administrator rights. Install only plugins whose author you trust.
 
