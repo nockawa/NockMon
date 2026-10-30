@@ -94,8 +94,8 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @files --clobber
           } else {
-            $flags = if ($env:PRERELEASE -eq 'true') { @('--prerelease') } else { @('--latest') }
-            gh release create $tag @files --title "NockMon $env:VERSION" --generate-notes --verify-tag @flags
+            $kind = if ($env:PRERELEASE -eq 'true') { '--prerelease' } else { '--latest' }
+            gh release create $tag @files --title "NockMon $env:VERSION" --generate-notes --verify-tag $kind
           }
           if ($LASTEXITCODE -ne 0) { throw "gh release failed ($LASTEXITCODE)." }
 

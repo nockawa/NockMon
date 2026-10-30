@@ -105,7 +105,8 @@ release. Its major.minor is the plugin API version (`PluginApi.Version` and `Noc
 | `src/NockMon.Sdk` | The plugin SDK: interfaces and the MSBuild files that make a project a plugin. |
 | `src/NockMon.Launcher` | The `nockmon` dotnet tool: launcher and MCP stdio relay (the app itself relays too, for the installer and single-file builds: `NockMon.exe mcp`). |
 | `tests/NockMon.Core.Tests` | Unit and integration tests of the core. |
-| `.github/workflows` | The release workflow (tags publish, pull requests build and test). |
+| `samples` | Example plugins (public domain, not in the solution): `ClaudeUsage.NockMon`, published on nuget.org by its own workflow. |
+| `.github/workflows` | The release workflow (tags `v*` publish, pull requests build and test) and the sample plugin's (tags `claude-usage-v*`). |
 | `installer` | The Inno Setup script. |
 | `tools/release` | The release build script. |
 | `tools/icon` | The application icon generator. |

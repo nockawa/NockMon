@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    NockMon plugin: the Weekly panel of claude-usage as a widget, and a complete example of a plugin. Build, then load the
+    output folder in NockMon (Plugins › Development, or nockmon - -plugin <output folder>); dotnet pack produces the plugin
+    package. Published by .github/workflows/claude-usage-plugin.yml (tag claude-usage-vX.Y.Z).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <PackageId>ClaudeUsage.NockMon</PackageId>
+    <Version>1.0.0</Version>
+    <Title>Claude Usage</Title>
+    <Authors>nockawa</Authors>
+    <Description>NockMon widget: your Claude subscription's weekly usage — used vs. elapsed, on pace / ahead / behind, reset countdown, burn pace vs. target. From the claude-usage tool.</Description>
+    <PackageTags>nockmon;nockmon-plugin;claude;anthropic;usage</PackageTags>
+    <PackageProjectUrl>https://github.com/nockawa/NockMon/tree/main/samples/ClaudeUsage.NockMon</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nockawa/NockMon.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- From nuget.org, as in any plugin: a ProjectReference to src/NockMon.Sdk would not import its build files. -->
+    <PackageReference Include="NockMon.Sdk" Version="1.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
