@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json.Nodes;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -11,6 +12,7 @@ namespace ClaudeUsage.NockMon;
 public sealed class WeeklyWidgetPlugin : IWidgetPlugin
 {
     internal const string RefreshSetting = "refreshMinutes";
+    internal const string NewsSetting = "newsCategories";
     internal const int DefaultRefreshMinutes = 10;
 
     public string Id => "weekly";
@@ -21,11 +23,14 @@ public sealed class WeeklyWidgetPlugin : IWidgetPlugin
         The **Weekly** panel of claude-usage, as a widget.
 
         - **Used**: share of the weekly limit consumed. **Elapsed**: share of the 7-day window gone by.
+        - **Trend** (after Used): your burn over the last 3 hours, in % of the limit per hour, and an arrow comparing it with the even burn that reaches the limit exactly at the reset: **→** within ±15 %, **↑** above, **↑↑** above 1.5×, **↓** below, **↓↓** below half (or no burn). Hover it for both rates.
         - **Ahead / On pace / Behind**: used compared with elapsed (±5 points). Ahead means you will hit the limit before the reset at this rate.
         - **Resets in**: time until the window restarts.
         - **Pace**: your burn over the last 24 h, in % of the limit per day ("avg" until a day of history exists: the average since the window opened). **Target**: what you can burn per day until the reset without hitting the limit. Red when pace is above target.
 
         **Source:** the OAuth token the Claude CLI stored (`CLAUDE_CODE_OAUTH_TOKEN`, else `~/.claude/.credentials.json`) and Anthropic's **unofficial** usage endpoint, the one the CLI uses: it can change without notice. Polled every few minutes (setting); while claude-usage runs, its fresh cache is used instead. All widgets share one poller.
+
+        **News:** a bell at the bottom right counts the unread Claude and Anthropic news in the categories ticked in the settings (by default: models, pricing and plans; Claude Code's weekly highlights). Click it for the list: an item you open is read, **Mark all as read** dismisses them. Sources: the Claude Platform release notes, sorted into categories by the documentation they link to; Claude Code's What's new and changelog. Checked every 30 minutes; what was published before the widget first checked a source counts as read.
         """;
 
     public WidgetSize DefaultSize => new(4, 4);
@@ -33,19 +38,27 @@ public sealed class WeeklyWidgetPlugin : IWidgetPlugin
 
     public IPluginWidget CreateWidget(IWidgetContext context) => new WeeklyWidget(context);
 
-    public IPluginSettingsEditor? CreateSettingsEditor(IWidgetContext context) => new RefreshEditor(context);
+    public IPluginSettingsEditor? CreateSettingsEditor(IWidgetContext context) => new SettingsEditor(context);
 
     internal static int RefreshMinutes(IWidgetContext context) =>
         context.Settings[RefreshSetting] is { } node && node.GetValueKind() == System.Text.Json.JsonValueKind.Number
             ? Math.Clamp(node.GetValue<int>(), 2, 120)
             : DefaultRefreshMinutes;
 
-    private sealed class RefreshEditor : IPluginSettingsEditor
+    /// <summary>The ticked news categories; the defaults until the settings were saved once.</summary>
+    internal static IReadOnlySet<NewsCategory> NewsCategories(IWidgetContext context) =>
+        context.Settings[NewsSetting] is JsonArray array
+            ? array.Select(n => n is JsonValue v && v.TryGetValue<string>(out var name) && Enum.TryParse<NewsCategory>(name, out var c) ? c : (NewsCategory?)null)
+                .OfType<NewsCategory>().ToHashSet()
+            : NewsFeeds.Categories.Where(c => c.Default).Select(c => c.Category).ToHashSet();
+
+    private sealed class SettingsEditor : IPluginSettingsEditor
     {
         private readonly IWidgetContext _context;
         private readonly NumberBox _minutes;
+        private readonly List<(NewsCategory Category, CheckBox Box)> _news = [];
 
-        public RefreshEditor(IWidgetContext context)
+        public SettingsEditor(IWidgetContext context)
         {
             _context = context;
             _minutes = new NumberBox
@@ -58,19 +71,26 @@ public sealed class WeeklyWidgetPlugin : IWidgetPlugin
                 HorizontalAlignment = HorizontalAlignment.Left,
                 MinWidth = 160,
             };
-            View = new StackPanel
+            var panel = new StackPanel
             {
                 Spacing = 6,
                 Children =
                 {
                     _minutes,
-                    new TextBlock
-                    {
-                        Text = "The usage endpoint is rate limited: a few minutes is plenty (the window spans a week). Widgets share one poller at the shortest interval.",
-                        TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.7,
-                    },
+                    Hint("The usage endpoint is rate limited: a few minutes is plenty (the window spans a week). Widgets share one poller at the shortest interval."),
+                    new TextBlock { Text = "Claude news", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 10, 0, 0) },
+                    Hint("A bell at the bottom right counts the unread news of the ticked categories. None ticked: no bell."),
                 },
             };
+            var ticked = NewsCategories(context);
+            foreach (var (category, label, hint, _) in NewsFeeds.Categories)
+            {
+                var box = new CheckBox { Content = label, IsChecked = ticked.Contains(category), MinHeight = 28, Padding = new Thickness(6, 4, 0, 0) };
+                ToolTipService.SetToolTip(box, hint);
+                _news.Add((category, box));
+                panel.Children.Add(box);
+            }
+            View = panel;
         }
 
         public UIElement View { get; }
@@ -80,19 +100,30 @@ public sealed class WeeklyWidgetPlugin : IWidgetPlugin
             if (double.IsNaN(_minutes.Value))
                 return "Enter a refresh interval in minutes.";
             _context.Settings[RefreshSetting] = (int)Math.Clamp(_minutes.Value, 2, 120);
+            _context.Settings[NewsSetting] = new JsonArray(_news.Where(n => n.Box.IsChecked == true).Select(n => (JsonNode)n.Category.ToString()).ToArray());
             return null;
         }
+
+        private static TextBlock Hint(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.7 };
     }
 }
 
 internal sealed class WeeklyWidget : IPluginWidget
 {
     private static readonly TimeSpan Window = TimeSpan.FromDays(7);
+    /// <summary>Narrower, a bar tells nothing: the trend then moves under the Used row.</summary>
+    private const double MinBarWidth = 60;
 
     private readonly IDisposable _subscription;
+    private readonly IDisposable? _newsSubscription;
+    private readonly NewsBell _bell;
+    private readonly Grid _bars = new() { ColumnSpacing = 8, RowSpacing = 4 };
+    private readonly TextBlock _usedLabel = Label("Used");
+    private readonly TextBlock _elapsedLabel = Label("Elapsed");
     private readonly Bar _used = new();
     private readonly Bar _elapsed = new();
     private readonly TextBlock _usedText = Value();
+    private readonly TextBlock _trend = Value();
     private readonly TextBlock _elapsedText = Value();
     private readonly TextBlock _status = new() { FontWeight = FontWeights.SemiBold, FontSize = 13 };
     private readonly TextBlock _statusBy = Value();
@@ -108,13 +139,21 @@ internal sealed class WeeklyWidget : IPluginWidget
     public WeeklyWidget(IWidgetContext context)
     {
         _subscription = UsageService.Subscribe(context.DataDirectory, TimeSpan.FromMinutes(WeeklyWidgetPlugin.RefreshMinutes(context)));
+        var news = WeeklyWidgetPlugin.NewsCategories(context);
+        _newsSubscription = news.Count > 0 ? NewsService.Subscribe(context.DataDirectory, news) : null;
+        _bell = new NewsBell(news);
 
-        var grid = new Grid { ColumnSpacing = 8, RowSpacing = 4 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        AddRow(grid, 0, Label("Used"), _used, _usedText);
-        AddRow(grid, 1, Label("Elapsed"), _elapsed, _elapsedText);
+        _bars.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _bars.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _bars.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _bars.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        AddRow(_bars, 0, _usedLabel, _used, _usedText, _trend);
+        AddRow(_bars, 1, _elapsedLabel, _elapsed, _elapsedText);
+        _trend.Visibility = Visibility.Collapsed;
+        // The grid's width comes from the widget, not from where the trend sits: no feedback loop.
+        _bars.SizeChanged += (_, _) => PlaceTrend();
+        _trend.SizeChanged += (_, _) => PlaceTrend();
+        _usedText.SizeChanged += (_, _) => PlaceTrend();
 
         var status = new Grid { ColumnSpacing = 8 };
         status.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -138,12 +177,13 @@ internal sealed class WeeklyWidget : IPluginWidget
         foreach (var v in new[] { _resets, _target })
             v.HorizontalAlignment = HorizontalAlignment.Left;
 
-        _data = new StackPanel { Spacing = 10, Children = { grid, status, details } };
-        View = new ScrollViewer
+        _data = new StackPanel { Spacing = 6, Children = { _bars, status, details } };
+        var content = new ScrollViewer
         {
-            Padding = new Thickness(10, 2, 10, 6),
-            Content = new StackPanel { Spacing = 10, Children = { _empty, _data, _footer } },
+            Padding = new Thickness(10, 0, 10, 2),
+            Content = new StackPanel { Spacing = 6, Children = { _empty, _data, _footer } },
         };
+        View = new Grid { Children = { content, _bell } };
         _data.Visibility = Visibility.Collapsed;
     }
 
@@ -151,6 +191,12 @@ internal sealed class WeeklyWidget : IPluginWidget
 
     public void Refresh()
     {
+        _bell.Refresh();
+        // The footer's text stops before the bell (bottom right) while it shows.
+        var footerRight = _bell.Visibility == Visibility.Visible ? 40 : 0;
+        if (_footer.Margin.Right != footerRight)
+            _footer.Margin = new Thickness(0, 0, footerRight, 0);
+
         var state = UsageService.State;
         var now = DateTimeOffset.UtcNow;
         UpdateFooter(state, now);
@@ -175,6 +221,7 @@ internal sealed class WeeklyWidget : IPluginWidget
         _used.Set(w.UtilPct, brush);
         _elapsed.Set(elapsedPct, palette.Elapsed);
         Set(_usedText, Percent(w.UtilPct));
+        UpdateTrend(state.Trend, palette);
         Set(_elapsedText, Percent(elapsedPct));
         Set(_status, "● " + word);
         _status.Foreground = brush;
@@ -198,6 +245,52 @@ internal sealed class WeeklyWidget : IPluginWidget
         Set(_target, $"{target.ToString("F1", CultureInfo.CurrentCulture)} %/d");
     }
 
+    private void UpdateTrend(Trend? trend, Palette palette)
+    {
+        _trend.Visibility = trend is null ? Visibility.Collapsed : Visibility.Visible;
+        if (trend is null)
+            return;
+        var (arrow, brush) = trend.Bucket switch
+        {
+            >= 2 => ("↑↑", palette.Ahead),
+            1 => ("↑", palette.Ahead),
+            0 => ("→", palette.OnPace),
+            -1 => ("↓", palette.Behind),
+            _ => ("↓↓", palette.Behind),
+        };
+        Set(_trend, $"{arrow} {trend.PctPerHour.ToString("+0.0;-0.0;0.0", CultureInfo.CurrentCulture)} %/h");
+        _trend.Foreground = brush;
+        _trend.FontWeight = Math.Abs(trend.Bucket) >= 2 ? FontWeights.SemiBold : FontWeights.Normal;
+        var tip = $"Burn over the last 3 h: {Rate(trend.PctPerHour)}. Even burn until the reset: {Rate(trend.TargetPctPerHour)}.";
+        if (ToolTipService.GetToolTip(_trend) as string != tip)
+            ToolTipService.SetToolTip(_trend, tip);
+
+        static string Rate(double value) => value.ToString("F2", CultureInfo.CurrentCulture) + " %/h";
+    }
+
+    /// <summary>The trend after the Used value while the bar keeps <see cref="MinBarWidth"/>, else on its own line under it.</summary>
+    private void PlaceTrend()
+    {
+        if (_bars.ActualWidth <= 0)
+            return;
+        var labels = Math.Max(_usedLabel.ActualWidth, _elapsedLabel.ActualWidth);
+        var values = Math.Max(_usedText.ActualWidth, _elapsedText.ActualWidth);
+        var bar = _bars.ActualWidth - labels - values - _trend.ActualWidth - 3 * _bars.ColumnSpacing;
+        var below = _trend.Visibility == Visibility.Visible && bar < MinBarWidth;
+        if (below == (Grid.GetRow(_trend) == 1))
+            return;
+
+        if (below)
+            _bars.RowDefinitions.Insert(1, new RowDefinition { Height = GridLength.Auto });
+        else
+            _bars.RowDefinitions.RemoveAt(1);
+        foreach (var cell in new FrameworkElement[] { _elapsedLabel, _elapsed, _elapsedText })
+            Grid.SetRow(cell, below ? 2 : 1);
+        Grid.SetRow(_trend, below ? 1 : 0);
+        Grid.SetColumn(_trend, below ? 1 : 3);
+        Grid.SetColumnSpan(_trend, below ? 2 : 1);
+    }
+
     private void UpdateFooter(UsageState state, DateTimeOffset now)
     {
         var updated = state.FetchedAt is { } at ? $"Updated {Ago(now - at)}" : null;
@@ -208,7 +301,11 @@ internal sealed class WeeklyWidget : IPluginWidget
         _footer.Foreground = state.Error is not null && state.Weekly is not null ? Palette.For(View).OnPace : Brush("TextFillColorSecondaryBrush");
     }
 
-    public void Dispose() => _subscription.Dispose();
+    public void Dispose()
+    {
+        _subscription.Dispose();
+        _newsSubscription?.Dispose();
+    }
 
     private static void AddRow(Grid grid, int row, params FrameworkElement[] cells)
     {

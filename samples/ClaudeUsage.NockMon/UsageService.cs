@@ -11,8 +11,14 @@ public sealed record WeeklyWindow(double UtilPct, DateTimeOffset ResetsAt);
 /// <summary>Burn rate over the trailing 24 h, in %/day; <see cref="HoursObserved"/> is the history behind it.</summary>
 public sealed record Pace(double PctPerDay, double HoursObserved);
 
+/// <summary>
+/// Recent burn (<see cref="PctPerHour"/>, % of the limit per hour) against the even burn that reaches the limit exactly at
+/// the reset (<see cref="TargetPctPerHour"/>). <see cref="Bucket"/>: -2 (well below) to 2 (well above), claude-usage's arrows.
+/// </summary>
+public sealed record Trend(double PctPerHour, double TargetPctPerHour, int Bucket);
+
 /// <summary>What the widgets show: the latest successful reading (kept across errors) and the latest error.</summary>
-public sealed record UsageState(WeeklyWindow? Weekly, Pace? Pace, DateTimeOffset? FetchedAt, string? Error, DateTimeOffset NextAttempt);
+public sealed record UsageState(WeeklyWindow? Weekly, Pace? Pace, Trend? Trend, DateTimeOffset? FetchedAt, string? Error, DateTimeOffset NextAttempt);
 
 /// <summary>
 /// Shared by every weekly widget: one poller for the whole app, running while at least one widget is on the board.
@@ -24,12 +30,13 @@ public static class UsageService
 {
     private const string UsageUrl = "https://api.anthropic.com/api/oauth/usage";
     private static readonly TimeSpan PaceLookback = TimeSpan.FromHours(24);
+    private static readonly TimeSpan TrendLookback = TimeSpan.FromHours(3);
     private static readonly Lock Gate = new();
     private static readonly HttpClient Http = CreateClient();
     private static readonly List<Subscription> Subscribers = [];
     private static CancellationTokenSource? _loop;
     private static SemaphoreSlim _wake = new(0);
-    private static volatile UsageState _state = new(null, null, null, null, DateTimeOffset.UtcNow);
+    private static volatile UsageState _state = new(null, null, null, null, null, DateTimeOffset.UtcNow);
     private static List<Sample>? _history;
     private static string? _dataDirectory;
 
@@ -86,7 +93,11 @@ public static class UsageService
                 var (weekly, fetchedAt) = await ReadAsync(interval, cancel);
                 failures = 0;
                 var history = Record(weekly, fetchedAt);
-                Publish(_state with { Weekly = weekly, Pace = ComputePace(history, weekly, fetchedAt), FetchedAt = fetchedAt, Error = null, NextAttempt = fetchedAt + interval });
+                Publish(_state with
+                {
+                    Weekly = weekly, Pace = ComputePace(history, weekly, fetchedAt), Trend = ComputeTrend(history, weekly, fetchedAt),
+                    FetchedAt = fetchedAt, Error = null, NextAttempt = fetchedAt + interval,
+                });
                 delay = fetchedAt + interval - DateTimeOffset.UtcNow;
             }
             catch (OperationCanceledException) when (cancel.IsCancellationRequested)
@@ -212,6 +223,31 @@ public static class UsageService
         var latest = current[^1];
         var hours = (latest.At - earliest.At).TotalHours;
         return hours < 1 ? null : new Pace(Math.Max(0, (latest.Util - earliest.Util) / hours * 24), hours);
+    }
+
+    /// <summary>
+    /// Burn over the last 3 h, from the first sample inside them, against the even burn left until the reset; the bucket
+    /// is their ratio (below 0.5, 0.85, 1.15, 1.5, above). Null until two samples a minute apart.
+    /// </summary>
+    private static Trend? ComputeTrend(List<Sample> history, WeeklyWindow weekly, DateTimeOffset now)
+    {
+        var current = history.Where(s => SameWindow(s.ResetsAt, weekly.ResetsAt)).OrderBy(s => s.At).ToList();
+        if (current.Count < 2)
+            return null;
+        var cutoff = now - TrendLookback;
+        var earliest = current.FirstOrDefault(s => s.At >= cutoff, current[0]);
+        var latest = current[^1];
+        var hours = (latest.At - earliest.At).TotalHours;
+        if (hours < 1.0 / 60)
+            return null;
+
+        var observed = (latest.Util - earliest.Util) / hours;
+        var hoursLeft = (weekly.ResetsAt - now).TotalHours;
+        var target = hoursLeft > 0 ? Math.Max(0, (100 - weekly.UtilPct) / hoursLeft) : 0;
+        var bucket = observed <= 0 ? -2 // No burn over the lookback.
+            : target <= 0 ? 2 // Limit reached, still burning.
+            : (observed / target) switch { < 0.5 => -2, < 0.85 => -1, < 1.15 => 0, < 1.5 => 1, _ => 2 };
+        return new Trend(observed, target, bucket);
     }
 
     private static string HistoryPath => Path.Combine(_dataDirectory ?? Path.GetTempPath(), "weekly-history.json");
