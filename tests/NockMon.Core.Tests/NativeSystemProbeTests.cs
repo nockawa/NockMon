@@ -124,10 +124,16 @@ public class NativeSystemProbeTests
         engine.SampleOnce();
         engine.SampleOnce();
 
+        // Reference: the OS's CPU time of this process over the same window, in logical CPUs. Other threads of the process
+        // (runtime, earlier tests' leftovers) add to both, so the comparison holds on a busy or virtual machine.
+        using var self = Process.GetCurrentProcess();
+        var cpuBefore = self.TotalProcessorTime;
         var sw = Stopwatch.StartNew();
         while (sw.ElapsedMilliseconds < 500)
             Thread.SpinWait(1000);
         Assert.True(engine.SampleOnce());
+        self.Refresh();
+        var reference = (self.TotalProcessorTime - cpuBefore).TotalSeconds / sw.Elapsed.TotalSeconds;
 
         var (cpu, watchedCpu, system, logical) = engine.Read(Environment.ProcessId, static (pid, s, h) =>
         {
@@ -141,10 +147,12 @@ public class NativeSystemProbeTests
             return (-1, 0, 0, 0);
         });
 
-        // One spinning thread ≈ 1 CPU (scheduler noise and 15.6 ms CPU-time granularity tolerated).
+        // The spinning thread alone is ~1 CPU; the process matches the OS reference (15.6 ms CPU-time granularity per thread
+        // and the slightly different windows tolerated).
         Assert.Equal(1, engine.WatchedProcessCount);
-        Assert.InRange(cpu, 0.7, 1.5);
-        Assert.InRange(watchedCpu, 0.7, 1.5);
+        Assert.True(cpu >= 0.7, $"Process CPU {cpu} below one busy thread.");
+        Assert.InRange(cpu, reference - 0.2, reference + 0.2);
+        Assert.InRange(watchedCpu, reference - 0.2, reference + 0.2);
         Assert.InRange(system, 0.7, logical);
     }
 }
