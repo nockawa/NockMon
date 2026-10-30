@@ -7,19 +7,21 @@
     NockMon-<version>-<arch>-setup.exe  Inno Setup installer (self-contained, per machine, Start menu): GitHub release, winget.
     NockMon-<version>-<arch>.exe        Single-file executable (self-extracting): GitHub release.
   Plus:
-    nuget\                              The dotnet tool packages (NockMon, NockMon.win-x64, NockMon.win-arm64).
+    nuget\                              The dotnet tool packages (NockMon, NockMon.win-x64, NockMon.win-arm64) and the plugin
+                                        SDK package (NockMon.Sdk, at its own version: the plugin API version).
     SHA256SUMS.txt                      Hashes of the downloads.
     winget\manifests\...                winget-pkgs manifests pointing at the GitHub release download URLs.
 
-  The version comes from src\NockMon.Launcher\NockMon.Launcher.csproj: bump it there (and commit) before a release.
-  The plugin SDK (NockMon.Sdk) is versioned with the plugin API and packed separately: dotnet pack src/NockMon.Sdk.
+  -Version is the release version (the CI passes the tag's); without it, the <Version> of
+  src\NockMon.Launcher\NockMon.Launcher.csproj.
 
 .EXAMPLE
-  pwsh tools/release/build.ps1
+  pwsh tools/release/build.ps1 -Version 1.1.0
   pwsh tools/release/build.ps1 -Architectures x64 -SkipSingleFile
 #>
 [CmdletBinding()]
 param(
+    [string] $Version,
     [string[]] $Architectures = @('x64', 'arm64'),
     [switch] $SkipInstaller,
     [switch] $SkipSingleFile,
@@ -30,9 +32,14 @@ $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $app = Join-Path $root 'src\NockMon.App\NockMon.App.csproj'
 $launcher = Join-Path $root 'src\NockMon.Launcher\NockMon.Launcher.csproj'
+$sdk = Join-Path $root 'src\NockMon.Sdk\NockMon.Sdk.csproj'
 
-$version = ([xml](Get-Content $launcher)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
-if (-not $version) { throw "No <Version> in $launcher." }
+$version = if ($Version) { $Version } else {
+    ([xml](Get-Content $launcher)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+}
+if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Version '$version' is not <major>.<minor>.<patch>[-<prerelease>]." }
+# Windows file versions are numeric: the prerelease suffix only appears in product versions and file names.
+$fileVersion = ($version -split '-')[0]
 $out = Join-Path $root "artifacts\release\$version"
 $stage = Join-Path $root "artifacts\release\stage"
 Write-Host "NockMon $version -> $out" -ForegroundColor Cyan
@@ -65,7 +72,7 @@ foreach ($arch in $Architectures) {
         $folder = Join-Path $stage $rid
         if (Test-Path $folder) { Remove-Item -Recurse -Force $folder }
         Invoke-Dotnet publish $app @common -r $rid '-p:SelfContained=true' -o $folder
-        & (Find-Iscc) /Q "/DAppVersion=$version" "/DArch=$arch" "/DSourceDir=$folder" "/DOutputDir=$out" (Join-Path $root 'installer\NockMon.iss')
+        & (Find-Iscc) /Q "/DAppVersion=$version" "/DFileVersion=$fileVersion" "/DArch=$arch" "/DSourceDir=$folder" "/DOutputDir=$out" (Join-Path $root 'installer\NockMon.iss')
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed for $arch ($LASTEXITCODE)." }
     }
 
@@ -81,7 +88,8 @@ foreach ($arch in $Architectures) {
 }
 
 if (-not $SkipTool) {
-    Invoke-Dotnet pack $launcher -c Release -o (Join-Path $out 'nuget')
+    Invoke-Dotnet pack $launcher -c Release "-p:Version=$version" -o (Join-Path $out 'nuget')
+    Invoke-Dotnet pack $sdk -c Release -o (Join-Path $out 'nuget')
 }
 
 # Checksums of the downloads.

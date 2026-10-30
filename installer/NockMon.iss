@@ -6,6 +6,10 @@
 #ifndef AppVersion
   #error Define AppVersion (/DAppVersion=1.2.3)
 #endif
+#ifndef FileVersion
+  ; Numeric only (VersionInfoVersion): build.ps1 passes AppVersion without its prerelease suffix.
+  #define FileVersion AppVersion
+#endif
 #ifndef Arch
   #define Arch "x64"
 #endif
@@ -35,7 +39,7 @@ AppPublisherURL=https://github.com/nockawa/NockMon
 AppSupportURL=https://github.com/nockawa/NockMon/issues
 AppUpdatesURL=https://github.com/nockawa/NockMon/releases
 AppCopyright=Copyright (c) 2026 Loïc Baumann
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#FileVersion}
 DefaultDirName={autopf}\NockMon
 DisableProgramGroupPage=yes
 DisableDirPage=auto
