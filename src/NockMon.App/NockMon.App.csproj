@@ -22,8 +22,24 @@
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <!-- -p:ProfilingBuild=true: optimized build that honors NOCKMON_SKIP_ELEVATION (profilers run non-elevated). Never ship it. -->
     <DefineConstants Condition="'$(ProfilingBuild)' == 'true'">$(DefineConstants);ELEVATION_BYPASS</DefineConstants>
-    <!-- Not packable itself: shipped as the payload of NockMon.Launcher (dotnet tool). -->
+    <!-- Not packable itself: shipped as the payload of NockMon.Launcher (dotnet tool), the installer and the single-file build. -->
     <IsPackable>false</IsPackable>
+    <ApplicationIcon>Assets\NockMon.ico</ApplicationIcon>
+    <!-- Unpackaged apps load resources.pri, else <exe name>.pri: the release renames the single-file exe (NockMon-<version>-<arch>.exe),
+         so the default NockMon.pri would not be found and XAML would fail to load. -->
+    <ProjectPriFileName>resources.pri</ProjectPriFileName>
+  </PropertyGroup>
+
+  <!--
+    -p:SingleFile=true (with -r): one self-extracting NockMon.exe, the GitHub release download. Settings required by the
+    Windows App SDK for single-file; the content is extracted to %TEMP%\.net\NockMon on first start.
+  -->
+  <PropertyGroup Condition="'$(SingleFile)' == 'true'">
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -42,9 +58,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\NockMon.Core\NockMon.Core.csproj" />
-    <!-- RID-agnostic library: without the per-RID publish folder, the launcher's parallel win-x64/win-arm64 publishes build it once. -->
-    <ProjectReference Include="..\NockMon.Sdk\NockMon.Sdk.csproj" GlobalPropertiesToRemove="PublishDir" />
+    <!-- RID-agnostic libraries: without the per-RID publish folder, the launcher's parallel win-x64/win-arm64 publishes build
+         each once (otherwise two builds race on the same obj folder).
+         UndefineProperties: the MSIX tooling (single-file) queries references' .pri with only configuration and platform, so the
+         RID would leak in and point at a RID folder the library is never built to. -->
+    <ProjectReference Include="..\NockMon.Core\NockMon.Core.csproj" GlobalPropertiesToRemove="PublishDir" />
+    <ProjectReference Include="..\NockMon.Sdk\NockMon.Sdk.csproj" GlobalPropertiesToRemove="PublishDir" UndefineProperties="RuntimeIdentifier;SelfContained" />
   </ItemGroup>
 
   <!-- TraceEvent's native/interop DLLs, same treatment (its props add them as links at the root). -->

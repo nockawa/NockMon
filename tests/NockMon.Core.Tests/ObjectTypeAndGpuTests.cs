@@ -250,7 +250,14 @@ public class GpuProbeIntegrationTests
         Assert.Equal(gpu.Adapters.Count, stats.Count);
         var s = stats[0];
         Assert.True(s[GpuMetric.DedicatedTotal] > 0 || s[GpuMetric.SharedTotal] > 0);
-        Assert.All(s.Engines, e => Assert.InRange(e, 0, 100));
+        // Adapters without engine statistics (basic display adapters, CI virtual machines) report NaN: no data.
+        for (var e = 0; e < s.Engines.Length; e++)
+        {
+            if (D3dkmt.NodeRunningTime(first.Luid, (uint)e) >= 0)
+                Assert.InRange(s.Engines[e], 0, 100);
+            else
+                Assert.True(double.IsNaN(s.Engines[e]), $"Engine {e} has no statistics but reports {s.Engines[e]}.");
+        }
 
         var nvidia = stats.FirstOrDefault(x => gpu.Adapters.First(a => a.Name == x.Name).HasNvml);
         if (nvidia is not null)

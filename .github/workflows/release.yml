@@ -1,0 +1,134 @@
+# Pushing a tag v<major>.<minor>.<patch>[-<prerelease>] builds, tests and publishes a release:
+#   GitHub release (installers, single-file executables, SHA256SUMS.txt), nuget.org (dotnet tool, plugin SDK when its
+#   version is new), winget (stable versions, when the WINGET_TOKEN secret is set).
+# Pull requests and manual runs build and test everything and publish nothing (the artifacts stay on the run).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: windows-2025
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME.Substring(1)
+            if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+              throw "Tag $env:GITHUB_REF_NAME is not v<major>.<minor>.<patch>[-<prerelease>]."
+            }
+          } else {
+            $version = ([xml](Get-Content src/NockMon.Launcher/NockMon.Launcher.csproj)).Project.PropertyGroup.Version |
+              Where-Object { $_ } | Select-Object -First 1
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "prerelease=$(([string]$version.Contains('-')).ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          Write-Host "NockMon $version"
+
+      - name: Test
+        run: dotnet test --solution NockMon.slnx -c Release
+
+      - name: Build release artifacts
+        shell: pwsh
+        run: tools/release/build.ps1 -Version ${{ steps.version.outputs.version }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: artifacts/release/${{ steps.version.outputs.version }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: windows-2025
+    # Required reviewers on this environment (repository settings) gate every publication; the nuget.org trusted
+    # publishing policy is restricted to it.
+    environment: release
+    permissions:
+      contents: write   # GitHub release
+      id-token: write   # nuget.org trusted publishing (OIDC)
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: release
+
+      # Re-runnable: a release that already exists gets its files replaced.
+      - name: GitHub release
+        shell: pwsh
+        run: |
+          $tag = "v$env:VERSION"
+          $files = @(Get-ChildItem release/*.exe | ForEach-Object FullName) + (Resolve-Path release/SHA256SUMS.txt).Path
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @files --clobber
+          } else {
+            $flags = if ($env:PRERELEASE -eq 'true') { @('--prerelease') } else { @('--latest') }
+            gh release create $tag @files --title "NockMon $env:VERSION" --generate-notes --verify-tag @flags
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release failed ($LASTEXITCODE)." }
+
+      # Short-lived API key (1 hour) from the trusted publishing policy: no stored secret.
+      - name: NuGet login
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: nockawa
+
+      # The tool's RID-specific packages before the main one (it points at them); the SDK is pushed only when its
+      # version is new (--skip-duplicate, which also makes a re-run safe).
+      - name: NuGet push
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}
+        run: |
+          $packages = Get-ChildItem release/nuget/*.nupkg
+          $ordered = @($packages | Where-Object Name -like 'NockMon.win-*') +
+                     @($packages | Where-Object Name -eq "NockMon.$env:VERSION.nupkg") +
+                     @($packages | Where-Object Name -like 'NockMon.Sdk.*')
+          if ($ordered.Count -ne $packages.Count) { throw "Unexpected packages: $($packages.Name -join ', ')" }
+          foreach ($package in $ordered) {
+            dotnet nuget push $package.FullName --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate
+            if ($LASTEXITCODE -ne 0) { throw "Push of $($package.Name) failed ($LASTEXITCODE)." }
+          }
+
+      # Pull request to microsoft/winget-pkgs (reviewed and merged by its moderators). Stable versions only.
+      - name: winget
+        if: env.PRERELEASE == 'false' && env.WINGET_TOKEN != ''
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          ./wingetcreate.exe submit --no-open --prtitle "New version: Nockawa.NockMon version $env:VERSION" `
+            --token $env:WINGET_TOKEN "release/winget/manifests/n/Nockawa/NockMon/$env:VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "wingetcreate failed ($LASTEXITCODE)." }

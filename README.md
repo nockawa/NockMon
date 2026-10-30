@@ -44,30 +44,36 @@ dashboards for you.
 ## Requirements
 
 - **Windows 10 version 2004 (build 19041) or later, or Windows 11**, x64 or ARM64.
-- **[.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)**, to install and run the `dotnet tool`.
 - **Administrator rights.** NockMon asks for elevation (UAC) at start: the kernel event session (ETW), other users'
   processes, kernel pool and object statistics all require it.
 
-The Windows App SDK is bundled: there is nothing else to install.
+.NET and the Windows App SDK are bundled with the installer and the single executable: there is nothing else to install.
 
 ## Install
 
-```powershell
-dotnet tool install -g NockMon
-```
+Pick one:
 
-Then start it from any terminal:
+| | How | Updates |
+|---|---|---|
+| **winget** | `winget install Nockawa.NockMon` | `winget upgrade Nockawa.NockMon` |
+| **Installer** | `NockMon-<version>-x64-setup.exe` (or `-arm64-`) from the [latest release](https://github.com/nockawa/NockMon/releases/latest) | Run the newer installer |
+| **Single executable** | `NockMon-<version>-x64.exe` from the [latest release](https://github.com/nockawa/NockMon/releases/latest): no install, run it from anywhere | Download the newer one |
+| **dotnet tool** | `dotnet tool install -g NockMon` (needs the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)) | `dotnet tool update -g NockMon` |
 
-```powershell
-nockmon
-```
+The installer (also what winget runs) installs for all users in `Program Files`, adds a Start menu shortcut, and
+optionally a desktop shortcut and a PATH entry (so AI agents can start `nockmon mcp`). Uninstall it from Windows
+settings or with `winget uninstall Nockawa.NockMon`; your settings and layouts stay in `%LOCALAPPDATA%\NockMon`.
 
-Update with `dotnet tool update -g NockMon`, remove with `dotnet tool uninstall -g NockMon`.
+The single executable unpacks itself to `%TEMP%\.net\NockMon` on first start (about 175 MB), which takes a few seconds
+once. Since NockMon runs as administrator, prefer the installer on shared or managed machines: it keeps NockMon's files
+where only administrators can change them.
 
-Running `nockmon` again while NockMon is running brings its window to the front (no second instance, no second UAC
-prompt).
+Starting NockMon again while it runs brings its window to the front (no second instance, no second UAC prompt).
 
 ### Command line
+
+`nockmon` is the installed command (installer with the PATH option, or the dotnet tool); with the single executable, use
+its file name instead.
 
 | Command | What it does |
 |---|---|

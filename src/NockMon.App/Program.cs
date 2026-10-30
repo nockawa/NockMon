@@ -12,6 +12,10 @@ public static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // MCP relay for AI agents: no window, no elevation, no single-instance claim.
+        if (args is [Agents.McpRelay.Argument, ..])
+            return Agents.McpRelay.Run();
+
         args = WaitForPreviousInstance(args);
         // Before elevation: a second launch must not trigger a UAC prompt.
         if (SingleInstance.IsAnotherInstanceRunning())
