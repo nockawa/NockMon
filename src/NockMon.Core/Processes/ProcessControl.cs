@@ -188,17 +188,24 @@ public static unsafe partial class ProcessControl
         using var process = Open(key, QueryInformation | VmRead | DupHandle);
         try
         {
-            using (var file = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+            // ERROR_PARTIAL_COPY: memory changed under the walk (a process starting, or allocating fast). Usually gone on
+            // the next attempt.
+            const int partialCopy = 299;
+            for (var attempt = 1; ; attempt++)
             {
+                using var file = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
                 bool written;
                 int error;
                 lock (DumpLock)
                 {
                     written = MiniDumpWriteDump(process, (uint)key.Pid, file.SafeFileHandle, type, 0, 0, 0);
-                    error = Marshal.GetLastPInvokeError();
+                    error = Marshal.GetLastPInvokeError() & 0xFFFF; // HRESULT_FROM_WIN32 for most failures.
                 }
-                if (!written)
-                    throw Failed("Dump", error & 0xFFFF); // HRESULT_FROM_WIN32 for most failures.
+                if (written)
+                    break;
+                if (error != partialCopy || attempt == 3)
+                    throw Failed("Dump", error);
+                Thread.Sleep(100 * attempt);
             }
         }
         catch

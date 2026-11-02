@@ -9,8 +9,10 @@ public class UserAccessTests
     {
         Assert.True(UserAccess.CanListFolder(Path.GetTempPath()));
         Assert.True(UserAccess.CanListFolder(Environment.GetFolderPath(Environment.SpecialFolder.Windows)));
-        // Administrators and SYSTEM only: refused even when this process is elevated (it answers for the user's other programs).
-        Assert.False(UserAccess.CanListFolder(Path.Combine(Environment.SystemDirectory, "config")));
+        // Administrators and SYSTEM only: refused even when this process is elevated (it answers for the user's other
+        // programs). Not where UAC is off (build machines): the user's programs are administrators there.
+        if (!Environment.IsPrivilegedProcess || UserAccess.HasLinkedToken())
+            Assert.False(UserAccess.CanListFolder(Path.Combine(Environment.SystemDirectory, "config")));
         Assert.False(UserAccess.CanListFolder(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))));
     }
 }

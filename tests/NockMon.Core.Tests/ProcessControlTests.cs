@@ -161,7 +161,9 @@ public class ProcessControlTests
         Assert.NotNull(details.Integrity);
         Assert.NotNull(details.Elevated);
         Assert.Null(details.Protection);
-        Assert.Equal(PriorityClass.Normal, details.Priority);
+        // Inherited from this process when below normal (build machines run their jobs there).
+        victim.Process.Refresh();
+        Assert.Equal((PriorityClass)(uint)victim.Process.PriorityClass, details.Priority);
         Assert.NotNull(details.Description);
     }
 

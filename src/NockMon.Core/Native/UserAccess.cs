@@ -59,6 +59,27 @@ public static unsafe partial class UserAccess
         }
     }
 
+    /// <summary>
+    /// True when this elevated process has a linked (filtered) token: UAC splits the administrator's rights, and the
+    /// user's other programs run without them. False with UAC off (build machines), or not elevated.
+    /// </summary>
+    public static bool HasLinkedToken()
+    {
+        if (!Environment.IsPrivilegedProcess || !AdvApi32.OpenProcessToken(Kernel32.GetCurrentProcess(), TOKEN_QUERY, out var token))
+            return false;
+        nint linked = 0;
+        try
+        {
+            return GetTokenInformation(token, TokenLinkedToken, &linked, (uint)sizeof(nint), out _) && linked != 0;
+        }
+        finally
+        {
+            if (linked != 0)
+                Kernel32.CloseHandle(linked);
+            Kernel32.CloseHandle(token);
+        }
+    }
+
     private static bool CanEnumerate(string path)
     {
         try
