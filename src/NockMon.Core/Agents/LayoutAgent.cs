@@ -402,13 +402,17 @@ public sealed class LayoutAgent
             throw new AgentException($"Plugin widget '{plugin.Plugin}/{plugin.Widget}' is not loaded (list_widget_kinds lists the available ones).");
     }
 
-    /// <summary>The folder must exist now: a typo would otherwise only show as "Folder not found" on the board.</summary>
+    /// <summary>
+    /// The folder must exist now (a typo would otherwise only show as "Folder not found" on the board), and the user must
+    /// be able to list it without elevation: NockMon scans as administrator, and an agent runs as the user. One message
+    /// for both, so an agent cannot probe which protected folders exist.
+    /// </summary>
     private static void ValidateFolder(Folders.FolderScope scope)
     {
         if (string.IsNullOrWhiteSpace(scope.Path))
             throw new AgentException("A folder needs a path (\"path\").");
-        if (!Directory.Exists(scope.FullPath))
-            throw new AgentException($"Folder not found: {scope.FullPath}.");
+        if (!Native.UserAccess.CanListFolder(scope.FullPath))
+            throw new AgentException($"Folder not found, or not readable by your account without elevation: {scope.FullPath}.");
     }
 
     private string? Icon(string? icon)

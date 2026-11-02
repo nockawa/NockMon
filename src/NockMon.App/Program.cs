@@ -9,12 +9,17 @@ public static class Program
     /// <summary>Argument of a restart: the new process waits for the old one to exit (single instance).</summary>
     public const string WaitForProcessArgument = "--wait-pid";
 
+    /// <summary>The uninstaller's: asks the running instance to exit cleanly, never starts one.</summary>
+    public const string ExitArgument = "--exit";
+
     [STAThread]
     private static int Main(string[] args)
     {
         // MCP relay for AI agents: no window, no elevation, no single-instance claim.
         if (args is [Agents.McpRelay.Argument, ..])
             return Agents.McpRelay.Run();
+        if (args is [ExitArgument])
+            return SingleInstance.ExitExisting(TimeSpan.FromSeconds(10)) ? 0 : 1;
 
         args = WaitForPreviousInstance(args);
         // Before elevation: a second launch must not trigger a UAC prompt.
@@ -31,7 +36,15 @@ public static class Program
             return 0;
         }
 
-        NockMon.Core.Persistence.AppPaths.MigrateLegacyRoot();
+        try
+        {
+            NockMon.Core.Persistence.AppPaths.Prepare();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Win32.MessageBox($"NockMon cannot prepare its data folder ({NockMon.Core.Persistence.AppPaths.Root}):\n{e.Message}", Win32.MB_OK | Win32.MB_ICONERROR);
+            return 1;
+        }
         WinRT.ComWrappersSupport.InitializeComWrappers();
         Application.Start(static _ =>
         {
@@ -45,7 +58,7 @@ public static class Program
     /// <summary>Starts a new instance (same arguments, same elevation, no UAC prompt) that waits for this one to exit.</summary>
     public static void StartReplacement()
     {
-        var psi = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, WorkingDirectory = Environment.CurrentDirectory };
+        var psi = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
         foreach (var arg in WithoutWait(Environment.GetCommandLineArgs()[1..]))
             psi.ArgumentList.Add(arg);
         psi.ArgumentList.Add(WaitForProcessArgument);

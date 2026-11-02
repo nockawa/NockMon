@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using NuGet.Versioning;
 
 namespace NockMon.Core.Plugins;
@@ -14,18 +15,25 @@ public sealed record InstalledPlugin(string Id, string Version, string Source, b
 /// Installed plugins: <c>&lt;root&gt;\&lt;id&gt;\&lt;version&gt;\</c> folders plus <c>state.json</c> recording the version to load
 /// and pending removals. Loaded assemblies are locked, so replacing or deleting a plugin takes effect at the next start
 /// (<see cref="ApplyPending"/>, before anything is loaded); a new plugin can be loaded right away.
+/// Thread-safe: changes are serialized (installs run in the background, several at once).
 /// </summary>
-public sealed class PluginStore(string root, Version hostApi)
+public sealed partial class PluginStore(string root, Version hostApi)
 {
     private const string StateFile = "state.json";
+    private readonly Lock _gate = new();
 
     public string Root { get; } = root;
 
-    public IReadOnlyList<InstalledPlugin> List() =>
-        ReadState().Plugins
-            .Select(p => new InstalledPlugin(p.Id, p.Version, p.Source, p.PendingRemoval, VersionDirectory(p.Id, p.Version)))
-            .OrderBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+    public IReadOnlyList<InstalledPlugin> List()
+    {
+        lock (_gate)
+        {
+            return ReadState().Plugins
+                .Select(p => new InstalledPlugin(p.Id, p.Version, p.Source, p.PendingRemoval, VersionDirectory(p.Id, p.Version)))
+                .OrderBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+    }
 
     public InstalledPlugin? Find(string id) => List().FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
 
@@ -33,34 +41,46 @@ public sealed class PluginStore(string root, Version hostApi)
     /// Installs (or updates to) the package: extracts it into its version folder and makes it the version to load.
     /// Clears a pending removal of the same plugin.
     /// </summary>
-    /// <exception cref="InvalidDataException">Not a plugin package, or built for an incompatible plugin API.</exception>
-    public PluginManifest Install(Stream package, string source)
+    /// <param name="expectedId">The id the package was requested as: a package claiming another id is refused (it would
+    /// replace that other plugin).</param>
+    /// <param name="expectedVersion">Likewise, the version requested.</param>
+    /// <exception cref="InvalidDataException">Not a plugin package, not the one requested, or built for an incompatible plugin API.</exception>
+    public PluginManifest Install(Stream package, string source, string? expectedId = null, string? expectedVersion = null)
     {
         var read = PluginPackage.Read(package);
         var manifest = read.Manifest;
+        if (!IsValidId(manifest.Id) || !NuGetVersion.TryParse(manifest.Version, out _))
+            throw new InvalidDataException($"Invalid plugin id or version: '{manifest.Id}' {manifest.Version}.");
+        if ((expectedId is not null && !string.Equals(manifest.Id, expectedId, StringComparison.OrdinalIgnoreCase)) ||
+            (expectedVersion is not null && Normalize(manifest.Version) != Normalize(expectedVersion)))
+            throw new InvalidDataException(
+                $"The feed returned '{manifest.Id}' {manifest.Version} for '{expectedId}' {expectedVersion}: refused.");
         if (!PluginManifest.IsCompatible(manifest.Api, hostApi))
             throw new InvalidDataException(
                 $"'{manifest.Title}' {manifest.Version} needs plugin API {manifest.Api}; this version of NockMon provides {hostApi}. " +
                 (manifest.Api > hostApi ? "Update NockMon." : "Look for a newer version of the plugin."));
 
-        var target = VersionDirectory(manifest.Id, manifest.Version);
-        if (!File.Exists(Path.Combine(target, PluginManifest.FileName)))
+        lock (_gate)
         {
-            // Extract beside, then rename: a failed install never leaves a half folder that looks valid.
-            var temp = target + ".tmp";
-            if (Directory.Exists(temp))
-                Directory.Delete(temp, recursive: true);
-            read.ExtractTo(temp);
-            if (Directory.Exists(target))
-                Directory.Delete(target, recursive: true);
-            Directory.Move(temp, target);
-        }
+            var target = VersionDirectory(manifest.Id, manifest.Version);
+            if (!File.Exists(Path.Combine(target, PluginManifest.FileName)))
+            {
+                // Extract beside, then rename: a failed install never leaves a half folder that looks valid.
+                var temp = target + ".tmp";
+                if (Directory.Exists(temp))
+                    Directory.Delete(temp, recursive: true);
+                read.ExtractTo(temp);
+                if (Directory.Exists(target))
+                    Directory.Delete(target, recursive: true);
+                Directory.Move(temp, target);
+            }
 
-        var state = ReadState();
-        state.Plugins.RemoveAll(p => string.Equals(p.Id, manifest.Id, StringComparison.OrdinalIgnoreCase));
-        state.Plugins.Add(new StateEntry { Id = manifest.Id, Version = Normalize(manifest.Version), Source = source });
-        WriteState(state);
-        return manifest;
+            var state = ReadState();
+            state.Plugins.RemoveAll(p => string.Equals(p.Id, manifest.Id, StringComparison.OrdinalIgnoreCase));
+            state.Plugins.Add(new StateEntry { Id = manifest.Id, Version = Normalize(manifest.Version), Source = source });
+            WriteState(state);
+            return manifest;
+        }
     }
 
     /// <summary>Marks the plugin for removal at the next start (its files may be in use).</summary>
@@ -73,6 +93,12 @@ public sealed class PluginStore(string root, Version hostApi)
     /// Folders that cannot be deleted are kept and retried next time.
     /// </summary>
     public void ApplyPending()
+    {
+        lock (_gate)
+            ApplyPendingLocked();
+    }
+
+    private void ApplyPendingLocked()
     {
         var state = ReadState();
         var removed = state.Plugins.Where(p => p.PendingRemoval).ToList();
@@ -101,11 +127,14 @@ public sealed class PluginStore(string root, Version hostApi)
 
     private void Update(string id, Action<StateEntry> change)
     {
-        var state = ReadState();
-        var entry = state.Plugins.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException($"Plugin '{id}' is not installed.");
-        change(entry);
-        WriteState(state);
+        lock (_gate)
+        {
+            var state = ReadState();
+            var entry = state.Plugins.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase))
+                        ?? throw new InvalidOperationException($"Plugin '{id}' is not installed.");
+            change(entry);
+            WriteState(state);
+        }
     }
 
     private string PluginDirectory(string id) => Path.Combine(Root, SafeName(id));
@@ -116,9 +145,20 @@ public sealed class PluginStore(string root, Version hostApi)
     private static string Normalize(string version) =>
         NuGetVersion.TryParse(version, out var v) ? v.ToNormalizedString().ToLowerInvariant() : version.ToLowerInvariant();
 
+    /// <summary>
+    /// A NuGet package id: letters, digits and underscores, in parts joined by single dots or dashes. Nothing Windows
+    /// would alias ("a." and "a" are the same folder) or resolve elsewhere ("..").
+    /// </summary>
+    internal static bool IsValidId(string? id) => id is { Length: > 0 and <= 100 } && IdPattern().IsMatch(id);
+
+    [GeneratedRegex(@"^\w+([.-]\w+)*$", RegexOptions.CultureInvariant)]
+    private static partial Regex IdPattern();
+
     private static string SafeName(string name)
     {
-        if (string.IsNullOrWhiteSpace(name) || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        // Ids are checked at install and on read; normalized versions parse, so they hold digits, letters, dots, dashes.
+        if (string.IsNullOrWhiteSpace(name) || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+            name.EndsWith('.') || name.EndsWith(' '))
             throw new InvalidDataException($"Invalid plugin name '{name}'.");
         return name;
     }
@@ -137,19 +177,26 @@ public sealed class PluginStore(string root, Version hostApi)
         }
     }
 
+    /// <summary>Entries that are not a valid id and version (a damaged or edited file) are dropped: never a crash at start.</summary>
     private State ReadState()
     {
         var path = Path.Combine(Root, StateFile);
+        State? state = null;
         try
         {
             if (File.Exists(path))
-                return JsonSerializer.Deserialize(File.ReadAllText(path), PluginJsonContext.Default.State) ?? new State();
+                state = JsonSerializer.Deserialize(File.ReadAllText(path), PluginJsonContext.Default.State);
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException)
         {
-            // Corrupt: start empty; folders stay on disk and a reinstall reuses them.
+            // Corrupt or unreadable: start empty; folders stay on disk and a reinstall reuses them.
         }
-        return new State();
+        if (state?.Plugins is not { } plugins)
+            return new State();
+        plugins.RemoveAll(p => p is null || !IsValidId(p.Id) || !NuGetVersion.TryParse(p.Version, out _));
+        foreach (var plugin in plugins)
+            plugin.Source ??= "";
+        return state;
     }
 
     private void WriteState(State state) =>

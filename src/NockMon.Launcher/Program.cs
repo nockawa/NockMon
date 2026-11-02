@@ -2,11 +2,19 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using Microsoft.Win32;
 
 const int ERROR_CANCELLED = 1223;
 // Same values as NockMon.Shell.SingleInstance in the app.
 const string MutexName = @"Local\NockMon.Instance";
 const string ShowMessageName = "NockMon.ShowWindow";
+
+if (!OperatingSystem.IsWindows())
+{
+    Console.Error.WriteLine("nockmon: NockMon runs on Windows only.");
+    return 1;
+}
 
 // "nockmon mcp": MCP server for AI agents (stdio), relayed to the running app. Never starts the app (no UAC prompt
 // behind an agent's back).
@@ -20,10 +28,13 @@ if (IsRunning())
     return 0;
 }
 
-var appPath = Path.Combine(AppContext.BaseDirectory, "app", "NockMon.exe");
-if (!File.Exists(appPath))
+if (FindInstalledApp() is not { } appPath)
 {
-    Console.Error.WriteLine($"nockmon: application payload not found at '{appPath}'.");
+    Console.Error.WriteLine("""
+        nockmon: NockMon is not installed. It runs as administrator, so it installs in Program Files:
+          winget install Nockawa.NockMon
+        or the installer from https://github.com/nockawa/NockMon/releases
+        """);
     return 1;
 }
 
@@ -32,7 +43,7 @@ var psi = new ProcessStartInfo(appPath)
 {
     UseShellExecute = true,
     Verb = "runas",
-    WorkingDirectory = Environment.CurrentDirectory,
+    WorkingDirectory = Path.GetDirectoryName(appPath)!,
 };
 foreach (var arg in args)
     psi.ArgumentList.Add(arg);
@@ -48,18 +59,39 @@ catch (Win32Exception e) when (e.NativeErrorCode == ERROR_CANCELLED)
     return 1;
 }
 
+// The installer records its folder in HKLM under its AppId (installer/NockMon.iss). Both the key and Program Files are
+// administrators-only: nothing a non-elevated process could have replaced, unlike this tool's own folder.
+[SupportedOSPlatform("windows")]
+static string? FindInstalledApp()
+{
+    const string uninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{8438DA19-4C3D-4C08-AA4F-8D5D11F16551}_is1";
+    using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+    using var key = hive.OpenSubKey(uninstallKey);
+    if (key?.GetValue("InstallLocation") is not string { Length: > 0 } folder)
+        return null;
+    var path = Path.GetFullPath(Path.Combine(folder, "NockMon.exe"));
+    var programFiles = Path.TrimEndingDirectorySeparator(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)) + Path.DirectorySeparatorChar;
+    return path.StartsWith(programFiles, StringComparison.OrdinalIgnoreCase) && File.Exists(path) ? path : null;
+}
+
 static async Task<int> RelayMcpAsync()
 {
-    if (!OperatingSystem.IsWindows())
-        return 1;
     // Same name as NockMon.Core.Agents.AgentPipeServer.DefaultPipeName: per user, elevated or not.
     var name = $"NockMon.Mcp.{System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value}";
-    using var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
+    using var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut,
+            // CurrentUserOnly: refuses a pipe another account owns (a squatter while NockMon is not running).
+            // Identification: the server may identify the relay, not act as it.
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, System.Security.Principal.TokenImpersonationLevel.Identification);
     try
     {
         await pipe.ConnectAsync(3000);
     }
-    catch (Exception e) when (e is TimeoutException or IOException or UnauthorizedAccessException)
+    catch (UnauthorizedAccessException)
+    {
+        Console.Error.WriteLine("nockmon mcp: the agent pipe belongs to another account, not to your NockMon: refusing to connect.");
+        return 1;
+    }
+    catch (Exception e) when (e is TimeoutException or IOException)
     {
         Console.Error.WriteLine(IsRunning()
             ? "nockmon mcp: AI agent access is off. Turn it on in NockMon (toolbar, AI agents button), then reconnect."

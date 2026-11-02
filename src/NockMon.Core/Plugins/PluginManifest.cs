@@ -34,7 +34,8 @@ public sealed record PluginManifest(
 
             var id = Required("id");
             var assembly = Required("assembly");
-            if (assembly.IndexOfAny(['/', '\\']) >= 0 || !assembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            // A bare file name: no separator, no drive ("C:x.dll" is drive-relative), nothing outside the plugin folder.
+            if (assembly.IndexOfAny(['/', '\\', ':']) >= 0 || !assembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException($"Plugin manifest: invalid assembly '{assembly}'.");
             if (!System.Version.TryParse(Required("api"), out var api))
                 throw new InvalidDataException("Plugin manifest: invalid 'api' version.");

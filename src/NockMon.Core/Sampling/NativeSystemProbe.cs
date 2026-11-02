@@ -29,6 +29,7 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
 
     public NativeSystemProbe()
     {
+        Processes.ProcessControl.EnableDebugPrivilege(); // Elevated: every process can be opened from the first sample.
         var groups = Kernel32.GetActiveProcessorGroupCount();
         _groupProcessorCounts = new ushort[groups];
         var maxPerGroup = 0;
@@ -115,7 +116,15 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
     private void CollectObjectTypes(RawSample sample)
     {
         uint returned;
-        if (NtDll.NtQueryObject(0, NtDll.ObjectTypesInformation, _objectTypesBuffer, ObjectTypesLength, &returned) < 0)
+        var status = NtDll.NtQueryObject(0, NtDll.ObjectTypesInformation, _objectTypesBuffer, _objectTypesLength, &returned);
+        if (status == NtDll.STATUS_INFO_LENGTH_MISMATCH && returned > _objectTypesLength)
+        {
+            _objectTypesLength = returned + returned / 4; // More types than ever seen (drivers add some): grow.
+            NativeMemory.Free(_objectTypesBuffer);
+            _objectTypesBuffer = (byte*)NativeMemory.Alloc(_objectTypesLength);
+            status = NtDll.NtQueryObject(0, NtDll.ObjectTypesInformation, _objectTypesBuffer, _objectTypesLength, &returned);
+        }
+        if (status < 0)
         {
             sample.ObjectTypeCount = 0;
             return;
@@ -140,9 +149,9 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
         sample.ObjectTypeCount = count;
     }
 
-    private const uint ObjectTypesLength = 64 * 1024;
+    private uint _objectTypesLength = 64 * 1024;
     private const int ObjectTypeInformationSize = 104; // OBJECT_TYPE_INFORMATION on x64.
-    private readonly byte* _objectTypesBuffer = (byte*)NativeMemory.Alloc(ObjectTypesLength);
+    private byte* _objectTypesBuffer = (byte*)NativeMemory.Alloc(64 * 1024);
     private readonly List<string> _objectTypeNames = [];
 
     private void CollectPoolTags(RawSample sample)
@@ -392,6 +401,7 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
         _buffer = null;
         _coreBuffer = null;
         _poolBuffer = null;
+        _objectTypesBuffer = null; // A second Dispose frees null: no double free.
         _counters.Dispose();
     }
 }

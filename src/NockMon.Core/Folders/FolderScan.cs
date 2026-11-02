@@ -140,7 +140,10 @@ public static partial class FolderScan
         var size = entry.Length;
         if ((entry.Attributes & AllocationDiffers) != 0)
         {
-            var low = GetCompressedFileSizeW(entry.ToFullPath(), out var high);
+            var path = entry.ToFullPath();
+            if (path.Length >= 260 && !path.StartsWith(@"\\?\", StringComparison.Ordinal)) // Beyond MAX_PATH: the long form.
+                path = path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;
+            var low = GetCompressedFileSizeW(path, out var high);
             if (low != uint.MaxValue || Marshal.GetLastPInvokeError() == 0)
                 size = ((long)high << 32) | low;
         }

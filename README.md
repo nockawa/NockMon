@@ -47,38 +47,38 @@ dashboards for you.
 - **Administrator rights.** NockMon asks for elevation (UAC) at start: the kernel event session (ETW), other users'
   processes, kernel pool and object statistics all require it.
 
-.NET and the Windows App SDK are bundled with the installer and the single executable: there is nothing else to install.
+.NET and the Windows App SDK are bundled with the installer: there is nothing else to install.
 
 ## Install
-
-Pick one:
 
 | | How | Updates |
 |---|---|---|
 | **winget** | `winget install Nockawa.NockMon` | `winget upgrade Nockawa.NockMon` |
 | **Installer** | `NockMon-<version>-x64-setup.exe` (or `-arm64-`) from the [latest release](https://github.com/nockawa/NockMon/releases/latest) | Run the newer installer |
-| **Single executable** | `NockMon-<version>-x64.exe` from the [latest release](https://github.com/nockawa/NockMon/releases/latest): no install, run it from anywhere | Download the newer one |
-| **dotnet tool** | `dotnet tool install -g NockMon` (needs the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)) | `dotnet tool update -g NockMon` |
 
 The installer (also what winget runs) installs for all users in `Program Files`, adds a Start menu shortcut, and
 optionally a desktop shortcut and a PATH entry (so AI agents can start `nockmon mcp`). Uninstall it from Windows
-settings or with `winget uninstall Nockawa.NockMon`; your settings and layouts stay in `%LOCALAPPDATA%\NockMon`.
+settings or with `winget uninstall Nockawa.NockMon`; your settings and layouts stay in `%ProgramData%\NockMon`.
 
-The single executable unpacks itself to `%TEMP%\.net\NockMon` on first start (about 175 MB), which takes a few seconds
-once. Since NockMon runs as administrator, prefer the installer on shared or managed machines: it keeps NockMon's files
-where only administrators can change them.
+NockMon runs as administrator, so everything it runs or reads lives where only administrators can change it: the app in
+`Program Files`, your settings, layouts and plugins in `%ProgramData%\NockMon\<your user SID>`. There is no portable
+or single-file version: it would run from a folder any of your non-elevated programs could modify. (Up to 1.1, data
+lived in `%LOCALAPPDATA%\NockMon`; 1.2 copies it over at first start.)
+
+Optionally, `dotnet tool install -g NockMon` adds the `nockmon` command line (it starts the installed app and relays
+MCP); up to 1.1 that package carried the app itself, it no longer does.
 
 Starting NockMon again while it runs brings its window to the front (no second instance, no second UAC prompt).
 
 ### Command line
 
-`nockmon` is the installed command (installer with the PATH option, or the dotnet tool); with the single executable, use
-its file name instead.
+`nockmon` is the installed command (installer with the PATH option, or the dotnet tool); otherwise use
+`"C:\Program Files\NockMon\NockMon.exe"`.
 
 | Command | What it does |
 |---|---|
 | `nockmon` | Starts NockMon (elevated), or shows the running instance. |
-| `nockmon --plugin <folder>` | Also loads a plugin from a build output folder (plugin development). Repeatable. |
+| `nockmon --plugin <folder>` | Also loads a plugin from a build output folder (plugin development; NockMon asks you to confirm, since the plugin runs as administrator). Repeatable. |
 | `nockmon mcp` | MCP server over stdio for AI agents, relayed to the running instance. See [AI agents](docs/mcp.md). |
 
 ## Getting started

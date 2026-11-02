@@ -181,6 +181,46 @@ public class EtwIntegrationTests
         Assert.Null(TraceEventSession.GetActiveSession(TestSession));
     }
 
+    /// <summary>Disk bytes go to the process that did the I/O (write-through: not deferred to the system's lazy writer).</summary>
+    [Fact]
+    public void DiskIo_IsAttributedToTheWritingProcess()
+    {
+        if (!Environment.IsPrivilegedProcess)
+            Assert.Skip("Kernel ETW sessions need elevation.");
+        const string name = TestSession + "-Disk";
+        var path = Path.Combine(Path.GetTempPath(), $"nockmon-etw-{Guid.NewGuid():N}.bin");
+        try
+        {
+            using var monitor = new EtwKernelMonitor(name);
+            monitor.Start();
+            Assert.Null(monitor.Status);
+            var io = new Dictionary<int, ProcessIoTotals>();
+            var drivers = new List<DriverTotals>();
+            Thread.Sleep(1500); // Session startup.
+            monitor.HarvestScan(io, drivers);
+
+            using (var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            {
+                var block = new byte[256 * 1024];
+                for (var i = 0; i < 16; i++)
+                    file.Write(block);
+            }
+            var own = 0L;
+            for (var i = 0; i < 20 && own < 4 << 20; i++)
+            {
+                Thread.Sleep(250); // Real-time buffers flush about every second.
+                io.Clear();
+                monitor.HarvestScan(io, drivers);
+                own += io.GetValueOrDefault(Environment.ProcessId).DiskWriteBytes;
+            }
+            Assert.True(own >= 4 << 20, $"Only {own} bytes written attributed to this process (pid {Environment.ProcessId}).");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     /// <summary>
     /// Another program stopping the session (a second monitor of the same name did, at start) used to throw on the ETW
     /// thread and kill the process. Now the monitor reports it, and its dispose leaves the name alone.

@@ -35,6 +35,18 @@ public sealed record FolderScope(string Path, bool Recursive = true, string? Inc
     /// <summary>Same folder: paths equal ignoring case, surrounding spaces and a trailing separator.</summary>
     public bool IsPath(string path) =>
         string.Equals(Path.Trim().TrimEnd('\\', '/'), path.Trim().TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The same scan: the same folder as <see cref="IsPath"/> ("C:\Temp" and "c:\temp\" are one scan and one history),
+    /// the same options; patterns ignore case like file names.
+    /// </summary>
+    public bool Equals(FolderScope? other) =>
+        other is not null && IsPath(other.Path) && Recursive == other.Recursive && SizeOnDisk == other.SizeOnDisk &&
+        string.Equals(Include, other.Include, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(Exclude, other.Exclude, StringComparison.OrdinalIgnoreCase);
+
+    public override int GetHashCode() => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(Path.Trim().TrimEnd('\\', '/')),
+        Recursive, SizeOnDisk, StringComparer.OrdinalIgnoreCase.GetHashCode(Include ?? ""), StringComparer.OrdinalIgnoreCase.GetHashCode(Exclude ?? ""));
 }
 
 /// <summary>A subfolder (directly under the scanned folder) and its total size.</summary>

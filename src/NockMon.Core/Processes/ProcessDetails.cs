@@ -42,8 +42,9 @@ public sealed partial record ProcessDetails(
                 if (path is not null)
                     version = FileVersionInfo.GetVersionInfo(path);
             }
-            catch (FileNotFoundException)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
             {
+                // Gone, locked or unreadable: no version, the rest still shows.
             }
             var (user, integrity, elevated) = ReadToken(process);
             var priority = GetPriorityClass(process);
@@ -54,6 +55,20 @@ public sealed partial record ProcessDetails(
     }
 
     private static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    /// <summary>The command line alone (what <see cref="Query"/> reads, without the token, account and file version lookups).</summary>
+    public static string? ReadCommandLine(ProcessKey key)
+    {
+        try
+        {
+            using var process = ProcessControl.Open(key, 0);
+            return ReadCommandLine(process);
+        }
+        catch (ProcessControlException)
+        {
+            return null;
+        }
+    }
 
     private static unsafe string? ReadCommandLine(SafeProcessHandle process)
     {
@@ -112,9 +127,9 @@ public sealed partial record ProcessDetails(
         {
             return sid.Translate(typeof(NTAccount)).Value;
         }
-        catch (IdentityNotMappedException)
+        catch (SystemException)
         {
-            return sid.Value;
+            return sid.Value; // Not mapped, or the lookup failed (LSA, domain unreachable).
         }
     }
 

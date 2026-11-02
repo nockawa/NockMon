@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    dotnet tool entry point. PackAsTool refuses platform TFMs (NETSDK1146), and WinUI requires one,
-    so this net10.0 launcher carries the published WinUI app under app\ and starts it elevated.
+    dotnet tool: "nockmon" starts the installed NockMon (installer or winget, in Program Files) and "nockmon mcp" relays
+    MCP for AI agents. It does not carry the app: a tool lives in the user's profile, where any non-elevated process
+    could modify files that NockMon would then run as administrator.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -14,17 +15,15 @@
 
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>nockmon</ToolCommandName>
-    <ToolPackageRuntimeIdentifiers>win-x64;win-arm64</ToolPackageRuntimeIdentifiers>
-    <RuntimeIdentifiers>$(ToolPackageRuntimeIdentifiers)</RuntimeIdentifiers>
     <!-- No apphost: the tool's runner is then "dotnet" and the CLI installs an .exe shim. With one (runner "executable") it
          installs a .cmd shim, which MCP clients built on Node.js cannot start without a shell. -->
     <UseAppHost>false</UseAppHost>
     <PackageId>NockMon</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.2.0</Version>
     <Authors>Loïc Baumann</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Copyright>Copyright (c) 2026 Loïc Baumann</Copyright>
-    <Description>Configurable tile-based system monitor for Windows: per-CPU, processes, GPU and kernel diagnostics (DPC/ISR latency per driver, pool tags, kernel objects), an hour of history, widget plugins, and an MCP server for AI agents.</Description>
+    <Description>Command line for NockMon, the configurable tile-based system monitor for Windows: starts the installed app, and relays its MCP server to AI agents (nockmon mcp). Install NockMon itself with winget (Nockawa.NockMon) or its installer.</Description>
     <PackageTags>monitor;system-monitor;performance;task-manager;windows;etw;dpc;latency;gpu;winui;mcp</PackageTags>
     <PackageProjectUrl>https://github.com/nockawa/NockMon</PackageProjectUrl>
     <RepositoryUrl>https://github.com/nockawa/NockMon</RepositoryUrl>
@@ -37,24 +36,5 @@
     <None Include="README.md" Pack="true" PackagePath="\" />
     <None Include="..\..\docs\images\icon.png" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
-
-  <PropertyGroup>
-    <_AppProject>$(MSBuildThisFileDirectory)..\NockMon.App\NockMon.App.csproj</_AppProject>
-    <_AppPublishDir>$(BaseIntermediateOutputPath)app\$(Configuration)\$(RuntimeIdentifier)\</_AppPublishDir>
-  </PropertyGroup>
-
-  <!-- RID-specific tool packages only: publish the WinUI app and add it to this tool's publish output under app\. -->
-  <Target Name="IncludeAppPayload" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="'$(RuntimeIdentifier)' != ''">
-    <MSBuild Projects="$(_AppProject)" Targets="Restore" RemoveProperties="TargetFramework"
-             Properties="RuntimeIdentifier=$(RuntimeIdentifier);_Restore=1" />
-    <MSBuild Projects="$(_AppProject)" Targets="Publish" RemoveProperties="TargetFramework"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=false;Version=$(Version);PublishDir=$([System.IO.Path]::GetFullPath('$(_AppPublishDir)'))" />
-    <ItemGroup>
-      <_AppPayload Include="$(_AppPublishDir)**\*" />
-      <ResolvedFileToPublish Include="@(_AppPayload)"
-                             RelativePath="app\%(_AppPayload.RecursiveDir)%(_AppPayload.Filename)%(_AppPayload.Extension)"
-                             CopyToPublishDirectory="PreserveNewest" />
-    </ItemGroup>
-  </Target>
 
 </Project>

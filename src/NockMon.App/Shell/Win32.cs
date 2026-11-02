@@ -52,4 +52,12 @@ internal static partial class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool SetForegroundWindow(nint hwnd);
 
+    public const uint MB_OK = 0x0, MB_YESNO = 0x4, MB_ICONERROR = 0x10, MB_ICONWARNING = 0x30, IDYES = 6;
+
+    /// <summary>A message box before (or without) any XAML window.</summary>
+    public static uint MessageBox(string text, uint type) => MessageBoxW(0, text, "NockMon", type);
+
+    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    private static partial uint MessageBoxW(nint hWnd, string text, string caption, uint type);
+
 }

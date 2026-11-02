@@ -49,6 +49,7 @@ public sealed partial class MainWindow : Window
             AppWindow.Resize(new SizeInt32((int)(1400 * scale), (int)(860 * scale)));
         }
         AppWindow.Closing += OnClosing;
+        AppWindow.Changed += OnAppWindowChanged;
 
         // Static bar icon for the window/taskbar; the tray icon is live.
         var size = BarIcon.SmallIconSize(_hwnd);
@@ -58,7 +59,13 @@ public sealed partial class MainWindow : Window
         _tray.Activated += ShowFromTray;
         _tray.MenuRequested += OnTrayMenu;
         Closed += (_, _) => _tray.Dispose();
-        SingleInstance.Listen(_hwnd, ShowFromTray);
+        if (Core.Persistence.AppPaths.StartupWarning is { } warning)
+            ShowInfo(InfoBarSeverity.Warning, "Data folder", warning);
+        SingleInstance.Listen(_hwnd, ShowFromTray, Exit, () =>
+        {
+            SavePlacement(); // Windows ends the process without closing the window.
+            _session.SaveSettings();
+        });
         SetAlwaysOnTop(session.Settings.AlwaysOnTop);
 
         Plugins.PluginWidgetView.OpenPluginsRequested += () => OpenPlugins(0);
@@ -154,12 +161,27 @@ public sealed partial class MainWindow : Window
     private void OnMonitorUpdated()
     {
         UpdateTray();
-        if (!AppWindow.IsVisible)
-            return; // Hidden to the tray: only the tray icon is fed.
+        if (!AppWindow.IsVisible || IsMinimized)
+            return; // Hidden to the tray or minimized: only the tray icon is fed.
 
         Board.RefreshWidgets();
         UpdateEtwInfo();
     }
+
+    private bool IsMinimized => AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter { State: Microsoft.UI.Windowing.OverlappedPresenterState.Minimized };
+
+    /// <summary>Restored from minimized: the widgets were not refreshed meanwhile.</summary>
+    private void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
+    {
+        if (args.DidPresenterChange || args.DidSizeChange)
+        {
+            if (sender.IsVisible && !IsMinimized && _wasMinimized)
+                OnMonitorUpdated();
+            _wasMinimized = IsMinimized;
+        }
+    }
+
+    private bool _wasMinimized;
 
     private string? _etwStatusShown;
     private long _etwLostShown;
@@ -314,7 +336,8 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void SetCompact(bool compact)
     {
-        if (_session.IsEditing || compact == _compact)
+        // Editing needs the toolbar (Done/Cancel): no entering compact mode then, but leaving it is always possible.
+        if (compact == _compact || (compact && _session.IsEditing))
             return;
         SavePlacement();
         _compact = compact;
@@ -599,11 +622,19 @@ public sealed partial class MainWindow : Window
 
     private async void DeleteTab(int index)
     {
-        var page = _session.Current.Pages[index];
+        var layout = _session.Current;
+        var page = layout.Pages[index];
         var count = page.Widgets.Count;
         if (count > 0 && !await Dialogs.ConfirmAsync(Content.XamlRoot, "Delete tab",
                 $"Delete '{page.Name}' and its {count} widget{(count == 1 ? "" : "s")}?", "Delete"))
             return;
+        // An AI agent may have changed the tabs (or the layout) while the question was open: delete the confirmed tab.
+        index = _session.Current == layout ? layout.Pages.IndexOf(page) : -1;
+        if (index < 0)
+        {
+            ShowInfo(InfoBarSeverity.Warning, "Delete tab", $"'{page.Name}' changed meanwhile: nothing was deleted.");
+            return;
+        }
         ChangePages(() => LayoutPages.Remove(_session.Current, index), rebuild: true);
     }
 
@@ -824,8 +855,11 @@ public sealed partial class MainWindow : Window
 
     private async void OnDeleteLayoutClick(object sender, RoutedEventArgs e)
     {
-        if (await Dialogs.ConfirmAsync(Content.XamlRoot, "Delete layout", $"Delete layout '{_session.Current.Name}'? This cannot be undone.", "Delete"))
-            Run(_session.Delete);
+        // By name: an AI agent may switch layouts while the question is open, and the confirmed one must be deleted.
+        var name = _session.Current.Name;
+        if (await Dialogs.ConfirmAsync(Content.XamlRoot, "Delete layout", $"Delete layout '{name}'? This cannot be undone.", "Delete") &&
+            Run(() => _session.Delete(name)))
+            RefreshPicker();
     }
 
     // --- Helpers ----------------------------------------------------------------------------------
@@ -845,6 +879,10 @@ public sealed partial class MainWindow : Window
             return false;
         }
     }
+
+    /// <summary>An exception from a plugin's own callback, contained by the app.</summary>
+    internal void ReportPluginFault(string plugin, Exception exception) =>
+        ShowInfo(InfoBarSeverity.Error, $"Plugin {plugin}", $"{exception.GetType().Name}: {exception.Message} (details in crash.log)");
 
     private void ShowInfo(InfoBarSeverity severity, string title, string message)
     {

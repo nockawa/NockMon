@@ -11,26 +11,77 @@ public sealed class PersistenceTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_dir))
-            Directory.Delete(_dir, true);
+        if (!Directory.Exists(_dir))
+            return;
+        // Junctions first (removed, not followed): a recursive delete fails on them.
+        foreach (var link in Directory.EnumerateDirectories(_dir, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 })
+                     .Where(d => File.GetAttributes(d).HasFlag(FileAttributes.ReparsePoint)).ToList())
+            Directory.Delete(link);
+        Directory.Delete(_dir, true);
     }
 
     [Fact]
-    public void MigrateLegacyRoot_MovesTheOldFolderOnce()
+    public void MigrateLegacyRoot_CopiesTheOldFolderOnce_WithoutFollowingLinks()
     {
-        var legacy = Path.Combine(_dir, "MyCpuMonitor");
-        var root = Path.Combine(_dir, "NockMon");
+        var legacy = Path.Combine(_dir, "NockMon");
+        var root = Path.Combine(_dir, "ProgramData", "S-1-5-21-1");
         Directory.CreateDirectory(Path.Combine(legacy, "Layouts"));
         File.WriteAllText(Path.Combine(legacy, "Layouts", "Default.json"), "{}");
+        var outside = Path.Combine(_dir, "outside");
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "secret.txt"), "x");
+        Junction(Path.Combine(legacy, "Plugins"), outside); // Planted: must not pull the target in.
 
         Assert.True(AppPaths.MigrateLegacyRoot(legacy, root));
         Assert.True(File.Exists(Path.Combine(root, "Layouts", "Default.json")));
+        Assert.False(Path.Exists(Path.Combine(root, "Plugins")));
         Assert.False(Directory.Exists(legacy));
+        Assert.True(Directory.Exists(legacy + " (moved to ProgramData)"));
+        Assert.False(Directory.Exists(root + ".migrating"));
 
-        Directory.CreateDirectory(legacy); // Both exist: the new folder wins, nothing moves.
+        Directory.CreateDirectory(legacy); // Both exist: the new folder wins, nothing is copied.
         Assert.False(AppPaths.MigrateLegacyRoot(legacy, root));
         Assert.True(Directory.Exists(legacy));
         Assert.False(AppPaths.MigrateLegacyRoot(Path.Combine(_dir, "missing"), Path.Combine(_dir, "other")));
+    }
+
+    [Fact]
+    public void SecureFolder_CreatesAnAdministratorsOnlyFolder_AndMovesAnUntrustedOneAway()
+    {
+        if (!Environment.IsPrivilegedProcess)
+            Assert.Skip("Needs elevation (an administrators-owned folder).");
+        var path = Path.Combine(_dir, "Secure");
+
+        Assert.Null(SecureFolder.Ensure(path));
+        Assert.True(SecureFolder.IsSecured(path));
+        Assert.Null(SecureFolder.Ensure(path)); // Already secured: kept.
+
+        var squatted = Path.Combine(_dir, "Squatted");
+        Directory.CreateDirectory(squatted); // Inherits the temp folder's ACL: the user may write.
+        File.WriteAllText(Path.Combine(squatted, "planted.dll"), "x");
+        var moved = SecureFolder.Ensure(squatted);
+        Assert.NotNull(moved);
+        Assert.True(File.Exists(Path.Combine(moved, "planted.dll")));
+        Assert.True(SecureFolder.IsSecured(squatted));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(squatted));
+
+        var link = Path.Combine(_dir, "Link");
+        Junction(link, path); // A link, even to a secured folder, is not one.
+        Assert.False(SecureFolder.IsSecured(link));
+        Assert.NotNull(SecureFolder.Ensure(link));
+        Assert.True(SecureFolder.IsSecured(link));
+    }
+
+    private static void Junction(string link, string target)
+    {
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", ["/c", "mklink", "/J", link, target])
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+        })!;
+        process.WaitForExit();
+        Assert.True(Directory.Exists(link));
     }
 
     [Fact]
@@ -89,6 +140,37 @@ public sealed class PersistenceTests : IDisposable
     }
 
     [Fact]
+    public void Deserialize_RepairsADamagedLayout()
+    {
+        const string json = """
+            { "name": "Bad", "board": null, "pages": [ null, { "name": null, "widgets": [
+                null,
+                { "$type": "chart", "bounds": { "column": 2147483000, "row": -5, "columnSpan": 2147483000, "rowSpan": 0 },
+                  "series": [ null, { "source": null } ] },
+                { "$type": "value", "source": null },
+                { "$type": "processTable", "columns": null },
+                { "$type": "stack", "items": [ { "$type": "stack", "items": [ { "$type": "chart" } ] }, null ] },
+                { "$type": "stack", "items": [] },
+                { "$type": "plugin", "plugin": "", "widget": "w" } ] } ] }
+            """;
+
+        var layout = LayoutStore.Deserialize(json);
+
+        var page = Assert.Single(layout.Pages);
+        Assert.Equal("Main", page.Name);
+        Assert.Equal(64, layout.Board.CellSize);
+        Assert.Equal(3, page.Widgets.Count); // The chart, the table, the stack with an item; the rest dropped.
+        var chart = Assert.IsType<ChartWidgetConfig>(page.Widgets[0]);
+        Assert.Empty(chart.Series);
+        Assert.Equal(new GridRect(LayoutRepair.MaxCoordinate, 0, LayoutRepair.MaxSpan, 1), chart.Bounds);
+        Assert.False(chart.Bounds.Intersects(new GridRect(0, 0, 1, 1)));
+        Assert.NotEmpty(Assert.IsType<ProcessTableWidgetConfig>(page.Widgets[1]).Columns);
+        var stack = Assert.IsType<StackWidgetConfig>(page.Widgets[2]);
+        Assert.IsType<ChartWidgetConfig>(Assert.Single(stack.Items)); // The nested stack flattened.
+        Assert.Throws<InvalidDataException>(() => LayoutStore.Deserialize("""{ "name": null }"""));
+    }
+
+    [Fact]
     public void Store_SaveListLoadRenameDelete()
     {
         var store = new LayoutStore(_dir);
@@ -102,6 +184,14 @@ public sealed class PersistenceTests : IDisposable
 
         store.Rename("Work", "Office");
         Assert.Equal(["Gaming: low", "Office"], store.List());
+        store.Rename("Office", "office"); // Same file: rewritten in place, never deleted.
+        Assert.Equal(["Gaming: low", "office"], store.List());
+        store.Rename("office", "Office");
+        // The new file is written before the old one goes: a failure keeps the layout.
+        Directory.CreateDirectory(Path.Combine(_dir, "Locked.json")); // A folder where the new file would go.
+        Assert.ThrowsAny<SystemException>(() => store.Rename("Office", "Locked"));
+        Assert.Equal("Office", store.Load("Office").Name);
+        Directory.Delete(Path.Combine(_dir, "Locked.json"));
 
         Assert.True(store.Delete("Office"));
         Assert.False(store.Delete("Office"));

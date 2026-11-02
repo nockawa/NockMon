@@ -67,6 +67,7 @@ public sealed class PluginTests : IDisposable
 
         Assert.Throws<InvalidDataException>(() => PluginManifest.Parse("""{ "version": "1", "assembly": "A.dll", "api": "1.0" }"""));
         Assert.Throws<InvalidDataException>(() => PluginManifest.Parse("""{ "id": "A", "version": "1", "assembly": "..\\x.dll", "api": "1.0" }"""));
+        Assert.Throws<InvalidDataException>(() => PluginManifest.Parse("""{ "id": "A", "version": "1", "assembly": "C:x.dll", "api": "1.0" }""")); // Drive-relative.
         Assert.Throws<InvalidDataException>(() => PluginManifest.Parse("not json"));
     }
 
@@ -119,6 +120,46 @@ public sealed class PluginTests : IDisposable
         var error = Assert.Throws<InvalidDataException>(() => store.Install(new MemoryStream(Package("A", "2.0.0", api: "1.1")), "x"));
         Assert.Contains("Update NockMon", error.Message);
         Assert.Empty(store.List());
+    }
+
+    [Fact]
+    public void Install_RefusesAPackageThatIsNotTheOneRequested()
+    {
+        var store = new PluginStore(_dir, HostApi);
+        store.Install(new MemoryStream(Package("Mine", "1.0.0")), "private");
+
+        // A feed answering for "Other" with a package claiming "Mine" would replace it.
+        Assert.Throws<InvalidDataException>(() => store.Install(new MemoryStream(Package("Mine", "9.0.0")), "evil", "Other", "9.0.0"));
+        Assert.Throws<InvalidDataException>(() => store.Install(new MemoryStream(Package("Mine", "9.0.0")), "evil", "Mine", "1.0.1"));
+        Assert.Equal(("1.0.0", "private"), (store.Find("Mine")!.Version, store.Find("Mine")!.Source));
+    }
+
+    [Theory]
+    [InlineData("{\"plugins\": null}")]
+    [InlineData("{\"plugins\": [null, {\"id\": \"..\", \"version\": \"1.0.0\"}, {\"id\": \"A.\", \"version\": \"1.0.0\"}, {\"id\": \"B\", \"version\": \"...\"}, {\"id\": \"C\", \"version\": \"1.0.0\", \"source\": null}]}")]
+    [InlineData("not json")]
+    public void DamagedState_DropsInvalidEntries_NeverThrows(string json)
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, "state.json"), json);
+        var store = new PluginStore(_dir, HostApi);
+
+        var list = store.List();
+        store.ApplyPending();
+
+        Assert.All(list, p => Assert.Equal("C", p.Id));
+        Assert.All(list, p => Assert.Equal("", p.Source));
+    }
+
+    [Fact]
+    public async Task ConcurrentInstalls_KeepEveryPlugin()
+    {
+        var store = new PluginStore(_dir, HostApi);
+        var packages = Enumerable.Range(0, 8).Select(i => Package($"P{i}", "1.0.0")).ToArray();
+
+        await Task.WhenAll(packages.Select(p => Task.Run(() => store.Install(new MemoryStream(p), "feed"))));
+
+        Assert.Equal(8, store.List().Count);
     }
 
     [Fact]
@@ -193,7 +234,8 @@ public sealed class PluginTests : IDisposable
         var listings = await feed.SearchAsync("claude usage", prerelease: false, default);
 
         var listing = Assert.Single(listings);
-        Assert.Equal(("ClaudeUsage.NockMon", "1.0.0", "Claude", "a, b", 42L, true),
+        // "verified" is nuget.org's reserved prefixes: from another feed, ignored.
+        Assert.Equal(("ClaudeUsage.NockMon", "1.0.0", "Claude", "a, b", 42L, false),
             (listing.Id, listing.Version, listing.Title, listing.Authors, listing.Downloads, listing.Verified));
         Assert.Contains("packageType=NockMonPlugin", handler.Requests[1]);
         Assert.Contains("q=claude%20usage", handler.Requests[1]);
@@ -202,6 +244,18 @@ public sealed class PluginTests : IDisposable
         await using var package = await feed.DownloadAsync("ClaudeUsage.NockMon", "1.0", default);
         Assert.Equal("https://feed.test/flat/claudeusage.nockmon/1.0.0/claudeusage.nockmon.1.0.0.nupkg", handler.Requests[^1]);
         Assert.Single(handler.Requests, r => r.EndsWith("v3/index.json")); // Service index fetched once.
+    }
+
+    [Fact]
+    public async Task NuGetFeed_RefusesPlainHttp()
+    {
+        var handler = new FakeHandler();
+        var feed = new NuGetFeed(new HttpClient(handler), "http://feed.test/v3/index.json");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => feed.SearchAsync(null, prerelease: false, default));
+        Assert.Empty(handler.Requests); // Not even asked.
+        Assert.False(PluginFeeds.IsSecureUrl("http://feed.test/v3/index.json"));
+        Assert.True(PluginFeeds.IsUrl("http://feed.test/v3/index.json"));
     }
 
     private sealed class FakeHandler : HttpMessageHandler

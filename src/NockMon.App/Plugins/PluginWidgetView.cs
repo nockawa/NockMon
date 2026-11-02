@@ -15,7 +15,16 @@ internal sealed class PluginWidgetContext(PluginWidgetConfig config, Action? sav
 {
     public JsonObject Settings => config.Settings ??= new JsonObject();
 
-    public void SaveSettings() => saved?.Invoke();
+    /// <summary>Saves the layout on the UI thread, whichever thread the plugin calls from.</summary>
+    public void SaveSettings()
+    {
+        if (saved is null)
+            return;
+        if (Dispatcher.HasThreadAccess)
+            saved();
+        else
+            Dispatcher.TryEnqueue(() => saved());
+    }
 
     public string DataDirectory
     {

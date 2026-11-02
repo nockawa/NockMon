@@ -12,9 +12,12 @@ namespace NockMon.Core.Agents;
 /// <para>
 /// Security: the app is elevated, so a default pipe would carry a High integrity label and an administrators-only DACL,
 /// refusing the non-elevated relay. The pipe is created with an explicit descriptor instead: the current user only,
-/// network logons denied, remote clients rejected, Medium integrity label (Low integrity sandboxes cannot write).
-/// The first instance is created with FILE_FLAG_FIRST_PIPE_INSTANCE: if another process already owns the name (a
-/// squatter impersonating NockMon), the server refuses to start rather than share it.
+/// network logons denied, remote clients rejected, Medium integrity label (Low integrity sandboxes can neither read
+/// nor write). The pipe is owned by the user (the relay checks that owner: another account's pipe is an impostor), but
+/// the user's non-elevated processes get no FILE_CREATE_PIPE_INSTANCE (no extra instances stealing connections) and no
+/// WRITE_DAC (OWNER RIGHTS replaces the owner's implicit rights).
+/// An instance is created with FILE_FLAG_FIRST_PIPE_INSTANCE whenever none of ours exists: if another process already
+/// owns the name (a squatter impersonating NockMon), the server refuses to start rather than share it.
 /// </para>
 /// </summary>
 public sealed partial class AgentPipeServer : IDisposable
@@ -23,8 +26,10 @@ public sealed partial class AgentPipeServer : IDisposable
     private readonly string _pipeName;
     private readonly Lock _lock = new();
     private readonly List<McpServer> _sessions = [];
+    private readonly List<NamedPipeServerStream> _connected = [];
     private CancellationTokenSource? _stop;
     private Task? _loop;
+    private int _instances; // Our pipe instances alive (listening or serving): none means the name is free.
 
     /// <param name="options">Options of a new session (a fresh tool collection each time).</param>
     /// <param name="pipeName">Pipe name (tests); <see cref="DefaultPipeName"/> by default.</param>
@@ -76,6 +81,12 @@ public sealed partial class AgentPipeServer : IDisposable
         catch (AggregateException)
         {
         }
+        // Access turned off ends the sessions now, even one whose tool call waits (on a dialog) and ignores cancellation.
+        lock (_lock)
+        {
+            foreach (var pipe in _connected)
+                pipe.Dispose();
+        }
         _stop.Dispose();
         _stop = null;
         _loop = null;
@@ -85,14 +96,13 @@ public sealed partial class AgentPipeServer : IDisposable
 
     private async Task AcceptAsync(CancellationToken cancel)
     {
-        var first = true;
         while (!cancel.IsCancellationRequested)
         {
             NamedPipeServerStream pipe;
             try
             {
-                pipe = CreatePipe(_pipeName, first);
-                first = false;
+                pipe = CreatePipe(_pipeName, first: Volatile.Read(ref _instances) == 0);
+                Interlocked.Increment(ref _instances);
             }
             catch (Exception e)
             {
@@ -107,12 +117,12 @@ public sealed partial class AgentPipeServer : IDisposable
             }
             catch (OperationCanceledException)
             {
-                await pipe.DisposeAsync().ConfigureAwait(false);
+                await ReleaseAsync(pipe).ConfigureAwait(false);
                 return;
             }
             catch (IOException)
             {
-                await pipe.DisposeAsync().ConfigureAwait(false); // Client gone before the connection completed.
+                await ReleaseAsync(pipe).ConfigureAwait(false); // Client gone before the connection completed.
                 continue;
             }
             _ = ServeAsync(pipe, cancel);
@@ -122,6 +132,8 @@ public sealed partial class AgentPipeServer : IDisposable
     private async Task ServeAsync(NamedPipeServerStream pipe, CancellationToken cancel)
     {
         McpServer? server = null;
+        lock (_lock)
+            _connected.Add(pipe);
         try
         {
             server = McpServer.Create(new StreamServerTransport(pipe, pipe, "nockmon"), _options());
@@ -145,9 +157,17 @@ public sealed partial class AgentPipeServer : IDisposable
                     _sessions.Remove(server);
                 await server.DisposeAsync().ConfigureAwait(false);
             }
-            await pipe.DisposeAsync().ConfigureAwait(false);
+            lock (_lock)
+                _connected.Remove(pipe);
+            await ReleaseAsync(pipe).ConfigureAwait(false);
             SessionsChanged?.Invoke();
         }
+    }
+
+    private async Task ReleaseAsync(NamedPipeServerStream pipe)
+    {
+        await pipe.DisposeAsync().ConfigureAwait(false);
+        Interlocked.Decrement(ref _instances);
     }
 
     private const uint PIPE_ACCESS_DUPLEX = 0x3;
@@ -159,16 +179,23 @@ public sealed partial class AgentPipeServer : IDisposable
     private const uint SDDL_REVISION_1 = 1;
     private const int ERROR_ACCESS_DENIED = 5;
 
+    /// <summary>Read and write, nothing else: FILE_GENERIC_READ | FILE_GENERIC_WRITE without FILE_CREATE_PIPE_INSTANCE.</summary>
+    private const string ClientAccess = "0x12019b";
+
     /// <summary>
-    /// Deny network logons; allow the current user and SYSTEM; Medium mandatory label, no write up.
-    /// Deny first: a network logon also carries the user's SID.
+    /// Owned by the user; deny network logons (first: a network logon also carries the user's SID); the user reads and
+    /// writes, OWNER RIGHTS likewise (no implicit WRITE_DAC); Medium mandatory label, no write or read up. Elevated, only
+    /// administrators (enabled in the elevated token alone) and SYSTEM may create instances; not elevated (tests,
+    /// profiling builds), the user must, and nothing separates it from its clients anyway.
     /// </summary>
-    internal static string SecurityDescriptor(string userSid) => $"D:P(D;;GA;;;NU)(A;;GA;;;{userSid})(A;;GA;;;SY)S:(ML;;NW;;;ME)";
+    internal static string SecurityDescriptor(string userSid, bool elevated) =>
+        $"O:{userSid}D:P(D;;GA;;;NU)(A;;{(elevated ? ClientAccess : "GA")};;;{userSid})(A;;{ClientAccess};;;OW)" +
+        $"{(elevated ? "(A;;GA;;;BA)" : "")}(A;;GA;;;SY)S:(ML;;NWNR;;;ME)";
 
     private static unsafe NamedPipeServerStream CreatePipe(string pipeName, bool first)
     {
         var sid = WindowsIdentity.GetCurrent().User!.Value;
-        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(SecurityDescriptor(sid), SDDL_REVISION_1, out var descriptor, 0))
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(SecurityDescriptor(sid, Environment.IsPrivilegedProcess), SDDL_REVISION_1, out var descriptor, 0))
             throw new IOException($"Pipe security descriptor rejected (error {Marshal.GetLastPInvokeError()}).");
         try
         {

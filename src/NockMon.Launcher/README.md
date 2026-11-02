@@ -11,19 +11,24 @@ and let AI agents query the data or build dashboards for you (MCP).
 
 ## Install and run
 
+This package is NockMon's command line. The app itself runs as administrator, so it installs in Program Files, where
+non-administrators cannot modify it:
+
 ```powershell
-dotnet tool install -g NockMon
+winget install Nockawa.NockMon
+dotnet tool install -g NockMon   # Optional: the nockmon command, for AI agents (MCP) and the terminal.
 nockmon
 ```
 
-Requires Windows 10 2004 (19041) or later, x64 or ARM64, and administrator rights (NockMon asks for elevation: kernel
-events and other processes' details need it). The Windows App SDK is bundled.
+Requires Windows 10 2004 (19041) or later, x64 or ARM64.
 
 | Command | What it does |
 |---|---|
-| `nockmon` | Starts NockMon, or shows the running instance. |
-| `nockmon --plugin <folder>` | Also loads a plugin from a build output folder (plugin development). |
+| `nockmon` | Starts the installed NockMon, or shows the running instance. |
+| `nockmon --plugin <folder>` | Also loads a plugin from a build output folder (plugin development; NockMon asks you to confirm). |
 | `nockmon mcp` | MCP server over stdio for AI agents, relayed to the running instance (off until enabled in the app). |
+
+Up to 1.1, this package carried the app itself. Since 1.2 it does not: install NockMon with winget or its installer.
 
 ## Documentation
 

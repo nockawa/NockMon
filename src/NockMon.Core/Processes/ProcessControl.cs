@@ -33,6 +33,12 @@ public static unsafe partial class ProcessControl
 
     private const int ProcessBreakOnTermination = 29;
     private static readonly Lazy<bool> DebugPrivilege = new(() => AdvApi32.EnablePrivilege("SeDebugPrivilege"));
+
+    /// <summary>
+    /// Enables SeDebugPrivilege (once; false without it, e.g. not elevated). The probe calls it at start: which processes
+    /// can be opened (watched processes, details) must not change the first time a process action runs.
+    /// </summary>
+    public static bool EnableDebugPrivilege() => DebugPrivilege.Value;
     private static readonly Lock DumpLock = new(); // DbgHelp is single-threaded.
 
     /// <summary>
@@ -108,7 +114,8 @@ public static unsafe partial class ProcessControl
         using var process = Open(key, SetInformation | QueryLimited);
         if (!SetPriorityClass(process, (uint)priority))
             throw Failed("Set priority", Marshal.GetLastPInvokeError());
-        return (PriorityClass)GetPriorityClass(process);
+        var actual = GetPriorityClass(process);
+        return actual == 0 ? priority : (PriorityClass)actual; // 0: could not be read back; it was set.
     }
 
     /// <returns>The process's affinity mask (processor group 0), or null if it cannot be read.</returns>

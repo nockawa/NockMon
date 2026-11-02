@@ -42,7 +42,10 @@ AppCopyright=Copyright (c) 2026 Loïc Baumann
 VersionInfoVersion={#FileVersion}
 DefaultDirName={autopf}\NockMon
 DisableProgramGroupPage=yes
-DisableDirPage=auto
+; Program Files only: a folder elsewhere (C:\NockMon) inherits "Authenticated Users: Modify" and would let any
+; non-elevated process replace what runs as administrator (and, with the PATH task, put a writable folder on the
+; machine PATH). /DIR= and winget --location are refused in PrepareToInstall.
+DisableDirPage=yes
 PrivilegesRequired=admin
 ArchitecturesAllowed={#ArchAllowed}
 ArchitecturesInstallIn64BitMode={#ArchAllowed}
@@ -82,12 +85,28 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
 Filename: "{app}\NockMon.exe"; Description: "Start NockMon"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-; Files in use otherwise. Settings and layouts stay in each user's %LOCALAPPDATA%\NockMon.
+; Files in use otherwise. A clean exit first: it stops NockMon's kernel trace session, which a forced kill leaves
+; running until reboot. Then force (another session's instance, or one that did not answer), and stop the session.
+; Settings, layouts and plugins stay in %ProgramData%\NockMon.
+Filename: "{app}\NockMon.exe"; Parameters: "--exit"; Flags: runhidden waituntilterminated; RunOnceId: "ExitNockMon"
 Filename: "{sys}\taskkill.exe"; Parameters: "/im NockMon.exe /f"; Flags: runhidden; RunOnceId: "StopNockMon"
+Filename: "{sys}\logman.exe"; Parameters: "stop NockMon-Kernel -ets"; Flags: runhidden; RunOnceId: "StopKernelSession"
 
 [Code]
 const
   EnvironmentKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ProgramFiles: string;
+begin
+  Result := '';
+  ProgramFiles := AddBackslash(ExpandConstant('{autopf}'));
+  if CompareText(Copy(AddBackslash(ExpandConstant('{app}')), 1, Length(ProgramFiles)), ProgramFiles) <> 0 then
+    Result := 'NockMon runs as administrator: it installs in ' + ProgramFiles + ' only, where non-administrators ' +
+      'cannot modify it. Uninstall the version installed in ' + ExpandConstant('{app}') + ' first, or install ' +
+      'without choosing a folder.';
+end;
 
 function NotOnPath(Dir: string): Boolean;
 var

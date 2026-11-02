@@ -73,6 +73,12 @@ internal static class PluginRuntime
             if (args[i] == "--plugin")
                 commandLine.Add(Path.GetFullPath(args[++i]));
         }
+        // Any program can start NockMon with --plugin: the UAC prompt alone would then load its code as administrator.
+        if (commandLine.Count > 0 && Shell.Win32.MessageBox(
+                $"Load the development plugin{(commandLine.Count > 1 ? "s" : "")} from:\n\n{string.Join("\n", commandLine)}\n\n" +
+                "Its code runs with administrator rights. Load only a folder you passed with --plugin yourself.",
+                Shell.Win32.MB_YESNO | Shell.Win32.MB_ICONWARNING) != Shell.Win32.IDYES)
+            commandLine.Clear();
         CommandLineFolders = commandLine;
 
         try
@@ -98,6 +104,23 @@ internal static class PluginRuntime
         }
     }
 
+    /// <summary>
+    /// The plugin whose code threw <paramref name="exception"/> (a frame of its stack, or of an inner exception's, in a
+    /// plugin's load context), or null when the host's own code did.
+    /// </summary>
+    public static string? FindCulprit(Exception exception)
+    {
+        for (var e = exception; e is not null; e = e.InnerException)
+        {
+            foreach (var frame in new StackTrace(e).GetFrames())
+            {
+                if (frame.GetMethod()?.DeclaringType?.Assembly is { } assembly && AssemblyLoadContext.GetLoadContext(assembly) is PluginLoadContext context)
+                    return context.PluginName;
+            }
+        }
+        return null;
+    }
+
     public static IWidgetPlugin? Find(string plugin, string widget) =>
         _widgets.FirstOrDefault(w => string.Equals(w.Key.Plugin, plugin, StringComparison.OrdinalIgnoreCase) && w.Key.Widget == widget).Value;
 
@@ -113,7 +136,7 @@ internal static class PluginRuntime
     public static async Task<bool> InstallAsync(PluginListing listing, CancellationToken cancellation)
     {
         await using var package = await listing.Feed.DownloadAsync(listing.Id, listing.Version, cancellation);
-        var manifest = await Task.Run(() => Store.Install(package, listing.Feed.Name), cancellation);
+        var manifest = await Task.Run(() => Store.Install(package, listing.Feed.Name, listing.Id, listing.Version), cancellation);
         if (FindLoaded(manifest.Id) is { } running)
         {
             // Same files already running (reinstall after an uninstall) need nothing; anything else waits.
@@ -280,6 +303,8 @@ internal static class PluginRuntime
     /// </summary>
     private sealed class PluginLoadContext(string mainAssembly, string name) : AssemblyLoadContext($"Plugin {name}")
     {
+        public string PluginName => name;
+
         private static readonly HashSet<string> HostAssemblies = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Select(Path.GetFileNameWithoutExtension)

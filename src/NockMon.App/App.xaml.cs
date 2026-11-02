@@ -40,6 +40,14 @@ public partial class App : Application
         UnhandledException += (_, e) =>
         {
             LogCrash(e.Exception);
+            // A plugin's own event handler or dispatcher callback (its widget calls are guarded already): the plugin is
+            // at fault, not the app's state. Anything else ends the app.
+            if (Plugins.PluginRuntime.FindCulprit(e.Exception) is { } plugin && _window is MainWindow window)
+            {
+                e.Handled = true;
+                window.ReportPluginFault(plugin, e.Exception);
+                return;
+            }
             _events.Dispose();
         };
         _gpu = new GpuProbe();

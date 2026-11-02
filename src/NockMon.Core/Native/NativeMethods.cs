@@ -35,7 +35,7 @@ internal static unsafe partial class Kernel32
     [LibraryImport("kernel32.dll")]
     public static partial uint GetActiveProcessorCount(ushort groupNumber);
 
-    [LibraryImport("kernel32.dll", EntryPoint = "K32GetPerformanceInfo")]
+    [LibraryImport("kernel32.dll", EntryPoint = "K32GetPerformanceInfo", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetPerformanceInfo(PerformanceInformation* performanceInformation, uint cb);
 

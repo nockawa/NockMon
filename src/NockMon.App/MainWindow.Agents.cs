@@ -132,6 +132,7 @@ public sealed partial class MainWindow
 
         public void AgentEditStarted(string client)
         {
+            window.SetCompact(false); // Compact mode hides Done/Cancel: the user could not end the agent's session.
             window.SetEditing(true);
             window.ShowInfo(InfoBarSeverity.Informational, $"{client} is editing this layout",
                 "Its changes show live. Review them, then Done keeps them, Cancel discards them.");

@@ -70,7 +70,11 @@ public sealed partial class FolderWidget : UserControl, IMonitorWidget
 
         ToolTipService.SetToolTip(this, _tip);
         _canvas.Draw += OnDraw;
-        DoubleTapped += (_, _) => OpenFolder();
+        DoubleTapped += (_, e) =>
+        {
+            e.Handled = true; // The board would toggle compact mode too.
+            OpenFolder();
+        };
         SizeChanged += (_, _) => _largest.Visibility = ActualHeight >= ListMinHeight && _largest.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         Unloaded += (_, _) => _canvas.RemoveFromVisualTree();
         ActualThemeChanged += (_, _) => _canvas.Invalidate();

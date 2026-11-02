@@ -57,7 +57,17 @@ internal static class ProcessMenu
             menu.Items.Add(new MenuFlyoutItem { Text = restriction, IsEnabled = false, FontSize = 12 });
         menu.Items.Add(new MenuFlyoutSeparator());
 
-        menu.Items.Add(Item("Details…", "", () => _ = ProcessDetailsDialog.ShowAsync(root, target, monitor)));
+        menu.Items.Add(Item("Details…", "", async () =>
+        {
+            try
+            {
+                await ProcessDetailsDialog.ShowAsync(root, target, monitor);
+            }
+            catch (Exception e)
+            {
+                Raise(InfoBarSeverity.Error, "Details", e.Message); // Never silently nothing.
+            }
+        }));
         menu.Items.Add(Item("Open file location", "", () => OpenLocation(target), enabled: !kernel));
         menu.Items.Add(Item("Properties", "", () => ShowProperties(target, root), enabled: !kernel));
         menu.Items.Add(CopyMenu(target, rowText));
@@ -137,8 +147,9 @@ internal static class ProcessMenu
         copy.Items.Add(Item("Name", null, () => Copy(target.Name)));
         copy.Items.Add(Item(target.IsGroup ? "PIDs" : "PID", null, () => Copy(string.Join(", ", target.Instances.Select(k => k.Pid)))));
         copy.Items.Add(Item("Path", null, () => Copy(ProcessImage.TryGetPath(target.First.Pid, target.First.CreateTime))));
-        copy.Items.Add(Item(target.IsGroup ? "Command lines" : "Command line", null, () =>
-            Copy(string.Join(Environment.NewLine, target.Instances.Select(k => ProcessDetails.Query(k).CommandLine).OfType<string>()))));
+        // Off the UI thread: one process open and read per instance (a group can have dozens).
+        copy.Items.Add(Item(target.IsGroup ? "Command lines" : "Command line", null, async () =>
+            Copy(await Task.Run(() => string.Join(Environment.NewLine, target.Instances.Select(ProcessDetails.ReadCommandLine).OfType<string>())))));
         copy.Items.Add(Item("Row", null, () => Copy(rowText())));
         return copy;
     }
@@ -152,7 +163,15 @@ internal static class ProcessMenu
         }
         var package = new DataPackage();
         package.SetText(text);
-        Clipboard.SetContent(package);
+        try
+        {
+            Clipboard.SetContent(package);
+        }
+        catch (System.Runtime.InteropServices.COMException e)
+        {
+            // CLIPBRD_E_CANT_OPEN: another program holds the clipboard (a clipboard manager, remote desktop).
+            Raise(InfoBarSeverity.Warning, "Copy", $"The clipboard is busy (another program has it open): {e.Message}");
+        }
     }
 
     // --- Control --------------------------------------------------------------------------------------

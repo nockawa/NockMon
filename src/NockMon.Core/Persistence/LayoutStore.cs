@@ -21,6 +21,7 @@ public sealed class LayoutStore(string directory)
         if (layout.SchemaVersion > LayoutDocument.CurrentSchemaVersion)
             throw new NotSupportedException(
                 $"Layout '{layout.Name}' has schema version {layout.SchemaVersion}; this build supports up to {LayoutDocument.CurrentSchemaVersion}.");
+        LayoutRepair.Repair(layout);
         return layout;
     }
 
@@ -94,8 +95,13 @@ public sealed class LayoutStore(string directory)
         if (!string.Equals(FileNameFor(oldName), FileNameFor(newName), StringComparison.OrdinalIgnoreCase) && Exists(newName))
             throw new InvalidOperationException($"Layout '{newName}' already exists.");
         layout.Name = newName;
+        if (string.Equals(FileNameFor(oldName), FileNameFor(newName), StringComparison.OrdinalIgnoreCase))
+        {
+            AppPaths.WriteAtomically(PathFor(newName), Serialize(layout)); // Same file (a case change): rewritten in place.
+            return;
+        }
+        Save(layout); // The new file first: a failure leaves the old one, never neither.
         Delete(oldName);
-        Save(layout);
     }
 
     public static string FileNameFor(string name)

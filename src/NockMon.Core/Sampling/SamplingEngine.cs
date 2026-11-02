@@ -45,6 +45,7 @@ public sealed class SamplingEngine : IDisposable
     private HistoryStore _history;
     private SamplingOptions _options;
     private string[]? _pendingPatterns;
+    private bool _rescanRequested; // Under _lock: Configure asks, the sampler (owner of _samplesUntilScan) applies.
     private Thread? _thread;
     private volatile bool _stopping;
     private readonly Etw.IKernelEventSource? _events;
@@ -52,13 +53,14 @@ public sealed class SamplingEngine : IDisposable
     private readonly Dictionary<int, Etw.ProcessIoTotals> _scanIo = new();
     private readonly List<Etw.DriverTotals> _scanDrivers = [];
     private readonly Dictionary<int, double> _gpuByPid = new();
-    private readonly FolderScanner _folders = new();
+    private readonly FolderScanner _folders;
 
     /// <param name="events">Optional kernel event stream (ETW) for disk, network and DPC/ISR metrics. Not owned.</param>
     /// <param name="gpu">Optional GPU source. Not owned.</param>
     public SamplingEngine(ISystemProbe probe, SamplingOptions options, Etw.IKernelEventSource? events = null, Gpu.IGpuSource? gpu = null)
     {
         options.Validate();
+        _folders = new FolderScanner(); // After validation: it starts a thread.
         _probe = probe;
         _events = events;
         _gpu = gpu;
@@ -120,7 +122,7 @@ public sealed class SamplingEngine : IDisposable
                 return;
             _options = options;
             _history = CreateHistory();
-            _samplesUntilScan = 0;
+            _rescanRequested = true;
         }
         _wake.Set();
     }
@@ -160,16 +162,18 @@ public sealed class SamplingEngine : IDisposable
         {
             var start = Stopwatch.GetTimestamp();
             string[]? patterns;
+            bool rescan;
             lock (_lock)
             {
                 patterns = _pendingPatterns;
                 _pendingPatterns = null;
+                rescan = _rescanRequested;
+                _rescanRequested = false;
             }
             if (patterns is not null)
-            {
                 _watched.SetPatterns(patterns);
-                _samplesUntilScan = 0; // Discover the new patterns' processes now.
-            }
+            if (patterns is not null || rescan)
+                _samplesUntilScan = 0; // New patterns' processes, or a new history: scan now.
 
             _probe.CollectSystem(_raw);
 
@@ -263,7 +267,14 @@ public sealed class SamplingEngine : IDisposable
             }
             catch (Exception e)
             {
-                SampleFailed?.Invoke(e);
+                try
+                {
+                    SampleFailed?.Invoke(e);
+                }
+                catch (Exception handler)
+                {
+                    Debug.WriteLine($"SampleFailed handler threw: {handler}"); // Must not end the sampler thread (and the app).
+                }
             }
 
             var intervalTicks = (long)(Interval.TotalSeconds * Stopwatch.Frequency);

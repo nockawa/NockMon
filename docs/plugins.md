@@ -164,8 +164,8 @@ Use [semantic versions](https://semver.org): Browse offers updates when a higher
   state that `Refresh` reads.
 - **A widget instance lives while it's on the board.** It's created when it enters the board and disposed when it
   leaves (layout switch, edit, removal): it may be created and disposed several times per session. Stop timers and background work in `Dispose`; share expensive pollers between instances.
-- **Files**: `IWidgetContext.DataDirectory` is the plugin's own folder (`%LOCALAPPDATA%\NockMon\PluginData\<id>`),
-  shared by its widgets.
+- **Files**: `IWidgetContext.DataDirectory` is the plugin's own folder (`%ProgramData%\NockMon\<user SID>\PluginData\<id>`,
+  writable by administrators only), shared by its widgets.
 - **Dependencies**: the host provides the SDK, the Windows App SDK (WinUI, projections, WebView2), CsWinRT, Win2D and
   the .NET runtime: they're neither copied to the output nor packed. Other dependencies are, and resolve from the
   plugin's folder (each plugin has its own load context).
@@ -231,7 +231,8 @@ A widget kind. Created once at start.
   assembly, plugin API version, title, description, authors, project URL.
 - **Versioning**: the host loads plugins built against the same major version of the plugin API and a lower or equal
   minor. The API version is the SDK package's major.minor.
-- **Install**: a package is extracted to `%LOCALAPPDATA%\NockMon\Plugins\<id>\<version>\`; updates and removals are
+- **Install**: a package is extracted to `%ProgramData%\NockMon\<user SID>\Plugins\<id>\<version>\` (administrators
+  only: plugins run as administrator, so nothing else may plant or change their files); updates and removals are
   applied at the next start, before anything loads.
 - **Loading**: each plugin gets its own `AssemblyLoadContext`; the host's assemblies (SDK, Windows App SDK) are shared,
   the plugin's dependencies are its own.

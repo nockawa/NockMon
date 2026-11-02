@@ -53,7 +53,8 @@ public static class ChartRenderer
             if (s.Count < 2)
                 continue;
             var values = s.Values.AsSpan(0, s.Count);
-            var baseline = stackBase[..s.Count];
+            // Newest sample at the right edge: a shorter series (a folder's, since its first scan) stacks on the last slots.
+            var baseline = stackBase[^s.Count..];
             var n = TopPoints(plot, values, baseline, style.Stacked, dx, yMin, yMax, out var top, out var bottom);
 
             // Area: one polygon (top points, then the baseline backwards): a single interop call.
@@ -61,6 +62,7 @@ public static class ChartRenderer
             top.AsSpan(0, n).CopyTo(polygon);
             for (var k = 0; k < n; k++)
                 polygon[2 * n - 1 - k] = bottom[k];
+            Pad(polygon, 2 * n);
             using (var area2 = CanvasGeometry.CreatePolygon(ds, polygon))
                 ds.FillGeometry(area2, Palette.WithAlpha(s.Color, style.Stacked ? (byte)0x70 : (byte)0x28));
 
@@ -126,25 +128,32 @@ public static class ChartRenderer
         return n;
     }
 
-    /// <summary>Exact-length polygon buffer (CreatePolygon takes the whole array), cached per length.</summary>
+    /// <summary>
+    /// A polygon buffer of at least <paramref name="length"/> points. CreatePolygon takes the whole array: lengths are
+    /// rounded up to a multiple of 64 and the caller fills the tail with <see cref="Pad"/> (repeated last vertex, a
+    /// degenerate edge). The cache is then small and stops growing: one buffer per 64 points, not per exact count
+    /// (which changes each sample while the history fills, and at each resize).
+    /// </summary>
     private static Vector2[] Polygon(int length)
     {
+        var rounded = (length + 63) & ~63;
         _polygons ??= [];
-        if (!_polygons.TryGetValue(length, out var polygon))
-            _polygons[length] = polygon = new Vector2[length];
+        if (!_polygons.TryGetValue(rounded, out var polygon))
+            _polygons[rounded] = polygon = new Vector2[rounded];
         return polygon;
     }
 
-    // CreatePolygon needs an exact-length array; cells of a widget share a width, so a per-length cache is allocation-free.
+    private static void Pad(Vector2[] polygon, int used) => polygon.AsSpan(used).Fill(polygon[used - 1]);
+
     [ThreadStatic] private static Dictionary<int, Vector2[]>? _polygons;
 
     /// <summary>
-    /// Filled area (to zero) of one series, newest sample at the right edge, built as a single polygon (one interop call)
-    /// and downsampled to at most one point per pixel column (bucket maximum, so spikes stay visible). For small multiples.
-    /// With <paramref name="stroke"/>, the top edge is also drawn as a 1 px line.
+    /// Adds the filled area (to zero) of one series to <paramref name="fill"/>, as a closed figure, and its top edge to
+    /// <paramref name="stroke"/>, as an open one: a grid of cells is then one fill and one stroke per layer, not two
+    /// geometries per cell. Newest sample at the right edge, at most one point per pixel column (bucket maximum, so
+    /// spikes stay visible). For small multiples.
     /// </summary>
-    internal static void FillArea(CanvasDrawingSession ds, Rect plot, ReadOnlySpan<float> values, int windowSamples, double yMax, Windows.UI.Color color,
-        Windows.UI.Color? stroke = null)
+    internal static void AddArea(CanvasPathBuilder fill, CanvasPathBuilder? stroke, Rect plot, ReadOnlySpan<float> values, int windowSamples, double yMax)
     {
         if (values.Length < 2 || plot.Width < 2 || plot.Height < 2)
             return;
@@ -159,10 +168,7 @@ public static class ChartRenderer
         // Samples per pixel column (>= 1).
         var bucket = Math.Max(1, (int)Math.Ceiling(1 / dx));
         var points = (values.Length + bucket - 1) / bucket;
-        _polygons ??= [];
-        if (!_polygons.TryGetValue(points + 2, out var polygon))
-            _polygons[points + 2] = polygon = new Vector2[points + 2];
-
+        var edge = Polygon(points);
         var n = 0;
         for (var i = 0; i < values.Length; i += bucket)
         {
@@ -170,23 +176,22 @@ public static class ChartRenderer
             var max = values[i];
             for (var k = i + 1; k < end; k++)
                 max = Math.Max(max, values[k]);
-            polygon[n++] = new Vector2(startX + (end - 1) * dx, Math.Max(top, bottom - max * scale));
+            edge[n++] = new Vector2(startX + (end - 1) * dx, Math.Max(top, bottom - max * scale));
         }
-        polygon[n++] = new Vector2(right, bottom);
-        polygon[n++] = new Vector2(polygon[0].X, bottom);
 
-        using (var geometry = CanvasGeometry.CreatePolygon(ds, polygon))
-            ds.FillGeometry(geometry, color);
+        fill.BeginFigure(edge[0]);
+        for (var k = 1; k < n; k++)
+            fill.AddLine(edge[k]);
+        fill.AddLine(new Vector2(right, bottom));
+        fill.AddLine(new Vector2(edge[0].X, bottom));
+        fill.EndFigure(CanvasFigureLoop.Closed);
 
-        if (stroke is null || points < 2)
+        if (stroke is null || n < 2)
             return;
-        using var builder = new CanvasPathBuilder(ds);
-        builder.BeginFigure(polygon[0]);
-        for (var k = 1; k < points; k++)
-            builder.AddLine(polygon[k]);
-        builder.EndFigure(CanvasFigureLoop.Open);
-        using var line = CanvasGeometry.CreatePath(builder);
-        ds.DrawGeometry(line, stroke.Value, 1);
+        stroke.BeginFigure(edge[0]);
+        for (var k = 1; k < n; k++)
+            stroke.AddLine(edge[k]);
+        stroke.EndFigure(CanvasFigureLoop.Open);
     }
 
     private static double ComputeMax(IReadOnlyList<SeriesData> series, MetricUnit unit, bool stacked, MonitorService monitor)

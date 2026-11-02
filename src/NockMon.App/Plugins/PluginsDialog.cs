@@ -25,7 +25,10 @@ internal sealed class PluginsDialog
     private readonly StackPanel _results = new() { Spacing = 8 };
     private readonly StackPanel _browseStatus = new() { Spacing = 4 };
     private readonly SelectorBar _tabs = new();
+    /// <summary>Latest version of each plugin per feed (<see cref="LatestKey"/>): an update only comes from the feed a plugin was installed from.</summary>
     private Dictionary<string, PluginListing>? _latest;
+
+    private static string LatestKey(string feed, string id) => $"{feed}\n{id.ToLowerInvariant()}";
     private CancellationTokenSource? _searching;
     private bool _loadedNew;
 
@@ -151,8 +154,9 @@ internal sealed class PluginsDialog
         add.Click += (_, _) =>
         {
             var source = input.Text.Trim();
-            var isUrl = Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+            var isUrl = PluginFeeds.IsUrl(source);
             string? problem = source.Length == 0 ? "Enter a feed URL or a folder."
+                : isUrl && !PluginFeeds.IsSecureUrl(source) ? "Use https: plugins run as administrator, plain http could be tampered with."
                 : !isUrl && !Directory.Exists(source) ? "Folder not found."
                 : _session.Settings.PluginSources.Contains(source, StringComparer.OrdinalIgnoreCase) ? "Already listed."
                 : null;
@@ -250,7 +254,9 @@ internal sealed class PluginsDialog
             .ThenBy(l => l.Title, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
         if (string.IsNullOrEmpty(query))
-            _latest = merged.ToDictionary(l => l.Id, StringComparer.OrdinalIgnoreCase);
+            _latest = results.SelectMany(r => r.Listings)
+                .GroupBy(l => LatestKey(l.Feed.Name, l.Id))
+                .ToDictionary(g => g.Key, g => g.MaxBy(l => NuGetVersion.TryParse(l.Version, out var v) ? v : new NuGetVersion(0, 0, 0))!);
         return (merged, results.Select(r => r.Error).OfType<string>().ToList());
     }
 
@@ -280,10 +286,15 @@ internal sealed class PluginsDialog
         {
             actions.Children.Clear();
             var installed = PluginRuntime.Store.Find(listing.Id);
-            var newer = installed is not null && IsNewer(listing.Version, installed.Version);
+            // Updates come from the feed the plugin was installed from: the same id on another feed may be someone else's.
+            var sameFeed = installed is not null && string.Equals(installed.Source, listing.Feed.Name, StringComparison.OrdinalIgnoreCase);
+            var newer = sameFeed && IsNewer(listing.Version, installed!.Version);
             if (installed is not null && !installed.PendingRemoval && !newer)
             {
-                actions.Children.Add(new Button { Content = "Installed", IsEnabled = false, MinWidth = 110 });
+                var button = new Button { Content = "Installed", IsEnabled = false, MinWidth = 110 };
+                if (!sameFeed)
+                    ToolTipService.SetToolTip(button, $"Installed from {installed.Source}: updates come from there only.");
+                actions.Children.Add(button);
                 return;
             }
             var install = new Button { Content = newer ? $"Update to {listing.Version}" : "Install", MinWidth = 110, Style = AccentStyle() };
@@ -449,7 +460,7 @@ internal sealed class PluginsDialog
             await SearchAllAsync(null, CancellationToken.None);
         foreach (var (plugin, actions) in plugins)
         {
-            if (_latest?.GetValueOrDefault(plugin.Id) is not { } listing || !IsNewer(listing.Version, plugin.Version))
+            if (_latest?.GetValueOrDefault(LatestKey(plugin.Source, plugin.Id)) is not { } listing || !IsNewer(listing.Version, plugin.Version))
                 continue;
             var update = new Button { Content = $"Update to {listing.Version}", MinWidth = 110, Style = AccentStyle() };
             update.Flyout = ConfirmInstall(listing, async () =>

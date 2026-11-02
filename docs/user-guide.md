@@ -204,7 +204,11 @@ that time.
 
 ## Files
 
-Everything lives in `%LOCALAPPDATA%\NockMon`:
+Everything lives in `%ProgramData%\NockMon\<your user SID>`, a folder only administrators can change (NockMon runs
+as administrator: a folder your other programs could write would let them plant code it then runs). Edit these files
+from an elevated editor. Up to 1.1 they lived in `%LOCALAPPDATA%\NockMon`: 1.2 copies them over at first start and
+renames the old folder `NockMon (moved to ProgramData)`. If `%ProgramData%\NockMon` exists but NockMon did not create it,
+NockMon moves it aside (`NockMon.untrusted-<date>`), starts with a new one, and tells you.
 
 | Path | Contents |
 |---|---|
@@ -215,5 +219,5 @@ Everything lives in `%LOCALAPPDATA%\NockMon`:
 
 Files are written atomically (a crash never leaves a truncated file). The history is kept in memory only.
 
-The environment variable `NOCKMON_DATA_DIR` points NockMon at another folder: handy for testing layouts or keeping
-separate profiles.
+The environment variable `NOCKMON_DATA_DIR` points a Debug build (or a non-elevated one) at another folder: handy for
+testing layouts or keeping separate profiles. Release builds running elevated ignore it, since any program could set it.

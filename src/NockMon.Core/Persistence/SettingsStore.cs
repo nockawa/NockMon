@@ -15,8 +15,9 @@ public sealed class SettingsStore(string path)
             if (File.Exists(Path))
                 return JsonSerializer.Deserialize(File.ReadAllText(Path), MonitorJsonContext.Default.AppSettings) ?? new AppSettings();
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException)
         {
+            // Corrupt, or locked (an antivirus, a sync tool): defaults, never a crash at start.
         }
         return new AppSettings();
     }

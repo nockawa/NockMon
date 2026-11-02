@@ -15,6 +15,10 @@ public readonly record struct FolderRequest(FolderScope Scope, TimeSpan Interval
 /// at most every <see cref="MinChangeInterval"/>. The interval stays as a safety net: watchers miss changes when their
 /// buffer overflows and on some network shares.
 /// </para>
+/// <para>
+/// Disk access (scans, watcher creation) happens on the scanner thread, never under the lock the UI takes: an
+/// unreachable share stalls the scans, not the window.
+/// </para>
 /// </summary>
 public sealed class FolderScanner : IDisposable
 {
@@ -34,6 +38,7 @@ public sealed class FolderScanner : IDisposable
     {
         public FolderRequest Request = request;
         public FileSystemWatcher? Watcher;
+        public bool WatcherDirty = true; // The watcher must be (re)considered: set under the lock, done by the scanner thread.
         public long Due = Stopwatch.GetTimestamp();
         public long LastStart;
         public long LastEnd;
@@ -72,6 +77,7 @@ public sealed class FolderScanner : IDisposable
                 : r with { Interval = interval };
         }
 
+        var stopped = new List<FileSystemWatcher>();
         lock (_gate)
         {
             foreach (var (scope, watched) in _watched.ToArray())
@@ -79,7 +85,9 @@ public sealed class FolderScanner : IDisposable
                 if (merged.ContainsKey(scope))
                     continue;
                 watched.Scanning?.Cancel();
-                watched.Watcher?.Dispose();
+                if (watched.Watcher is { } watcher)
+                    stopped.Add(watcher);
+                watched.Watcher = null;
                 _watched.Remove(scope);
             }
             foreach (var (scope, request) in merged)
@@ -90,16 +98,17 @@ public sealed class FolderScanner : IDisposable
                     watched.Request = request;
                     if (sooner && watched.LastStart != 0)
                         watched.Due = Math.Min(watched.Due, watched.LastStart + Ticks(request.Interval));
-                    UpdateWatcher(watched);
+                    watched.WatcherDirty = true;
                 }
                 else
                 {
-                    _watched[scope] = watched = new Watched(request);
-                    UpdateWatcher(watched);
+                    _watched[scope] = new Watched(request);
                 }
             }
             PublishReadings();
         }
+        foreach (var watcher in stopped)
+            watcher.Dispose();
         _wake.Set();
     }
 
@@ -136,6 +145,7 @@ public sealed class FolderScanner : IDisposable
     {
         while (!_disposed)
         {
+            UpdateWatchers();
             Watched? next = null;
             int waitMs;
             lock (_gate)
@@ -166,9 +176,15 @@ public sealed class FolderScanner : IDisposable
             {
                 result = FolderScan.Run(item.Request.Scope, item.Scanning!.Token);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (item.Scanning!.IsCancellationRequested)
             {
                 result = null; // Removed while scanning.
+            }
+            catch (OperationCanceledException e)
+            {
+                // Not ours: an I/O aborted by the system (ERROR_OPERATION_ABORTED on a network share). A failed scan,
+                // paced like any other, not a removal to retry at once.
+                result = new FolderScanResult(DateTime.UtcNow, 0, 0, 0, 0, TimeSpan.Zero, [], e.Message);
             }
 
             lock (_gate)
@@ -185,7 +201,7 @@ public sealed class FolderScanner : IDisposable
                 item.Due = Math.Max(item.LastStart + Ticks(item.Request.Interval), floor);
                 if (item.FirstChange != 0)
                     ScheduleChange(item); // Changed during the scan.
-                UpdateWatcher(item); // The folder may have appeared (or vanished).
+                item.WatcherDirty = true; // The folder may have appeared (or vanished).
                 PublishReadings();
             }
             Scanned?.Invoke(item.Request.Scope);
@@ -194,6 +210,8 @@ public sealed class FolderScanner : IDisposable
 
     private void OnChanged(Watched watched)
     {
+        if (_disposed)
+            return; // A callback already in flight when the scanner was disposed.
         lock (_gate)
         {
             if (watched.FirstChange != 0)
@@ -213,18 +231,46 @@ public sealed class FolderScanner : IDisposable
         w.Due = Math.Min(w.Due, due);
     }
 
-    /// <summary>A watcher while changes are watched and the folder exists; recreated when its settings changed.</summary>
-    private void UpdateWatcher(Watched w)
+    /// <summary>
+    /// Scanner thread: a watcher for each scope whose changes are watched and whose folder exists, none for the others.
+    /// The folder checks and watcher creation run outside the lock.
+    /// </summary>
+    private void UpdateWatchers()
+    {
+        List<(Watched Item, bool Has)> dirty;
+        lock (_gate)
+        {
+            dirty = _watched.Values.Where(w => w.WatcherDirty).Select(w => (w, w.Watcher is not null)).ToList();
+            foreach (var (item, _) in dirty)
+                item.WatcherDirty = false;
+        }
+        foreach (var (item, has) in dirty)
+        {
+            var scope = item.Request.Scope;
+            var wanted = item.Request.WatchChanges && Directory.Exists(scope.FullPath);
+            var created = wanted && !has ? CreateWatcher(item) : null;
+            FileSystemWatcher? obsolete = created;
+            lock (_gate)
+            {
+                var current = _watched.TryGetValue(scope, out var w) && w == item;
+                if (current && !wanted)
+                {
+                    obsolete = item.Watcher;
+                    item.Watcher = null;
+                }
+                else if (current && created is not null && item.Watcher is null)
+                {
+                    item.Watcher = created;
+                    obsolete = null;
+                }
+            }
+            obsolete?.Dispose();
+        }
+    }
+
+    private FileSystemWatcher? CreateWatcher(Watched w)
     {
         var scope = w.Request.Scope;
-        if (!w.Request.WatchChanges || !Directory.Exists(scope.FullPath))
-        {
-            w.Watcher?.Dispose();
-            w.Watcher = null;
-            return;
-        }
-        if (w.Watcher is not null)
-            return;
         try
         {
             var watcher = new FileSystemWatcher(scope.FullPath)
@@ -239,11 +285,11 @@ public sealed class FolderScanner : IDisposable
             watcher.Renamed += (_, _) => OnChanged(w);
             watcher.Error += (_, _) => OnChanged(w); // Overflow: something changed, rescan.
             watcher.EnableRaisingEvents = true;
-            w.Watcher = watcher;
+            return watcher;
         }
         catch (Exception e) when (e is IOException or ArgumentException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
-            w.Watcher = null; // The interval still applies.
+            return null; // The interval still applies.
         }
     }
 
@@ -268,6 +314,6 @@ public sealed class FolderScanner : IDisposable
         }
         _wake.Set();
         _thread.Join(TimeSpan.FromSeconds(5));
-        _wake.Dispose();
+        // _wake is not disposed: a watcher callback already in flight may still set it.
     }
 }

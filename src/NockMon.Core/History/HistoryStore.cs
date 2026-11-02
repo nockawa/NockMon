@@ -33,6 +33,8 @@ public sealed class HistoryStore
     private readonly Dictionary<string, NameSeries> _names = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, WatchedSeries> _watched = new(StringComparer.Ordinal);
     private readonly Dictionary<string, NamePattern> _patterns = new();
+    private readonly Dictionary<string, (int Version, List<NameSeries> Names)> _matches = new(StringComparer.Ordinal);
+    private int _namesVersion; // Changes when a name appears or is evicted: cached pattern matches are then stale.
     private readonly HashSet<string> _seenPatterns = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (float[] Objects, float[] Handles)> _objectTypes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, GpuRings> _gpus = new(StringComparer.OrdinalIgnoreCase);
@@ -43,10 +45,11 @@ public sealed class HistoryStore
     private float[] _scanScratch = [];
     private float[] _scratch = [];
 
+    /// <summary>One image name's per-scan history: sparse, most fields are zero most of the time (see <see cref="SparseRing"/>).</summary>
     private sealed class NameSeries(string name, int capacity)
     {
         public readonly string Name = name;
-        public readonly float[][] Values = CreateBuffers(ProcessFieldCount, capacity);
+        public readonly SparseRing[] Values = Enumerable.Range(0, ProcessFieldCount).Select(_ => new SparseRing(capacity)).ToArray();
         public long LastActiveScan;
     }
 
@@ -248,8 +251,8 @@ public sealed class HistoryStore
 
         foreach (var series in _names.Values)
         {
-            foreach (var buffer in series.Values)
-                buffer[slot] = 0;
+            foreach (var ring in series.Values)
+                ring.Clear(slot);
         }
 
         foreach (ref readonly var p in table.Span)
@@ -258,10 +261,11 @@ public sealed class HistoryStore
             {
                 series = new NameSeries(p.Name, ScanCapacity);
                 _names.Add(p.Name, series);
+                _namesVersion++;
             }
             series.LastActiveScan = TotalScans;
             for (var f = 0; f < ProcessFieldCount; f++)
-                series.Values[f][slot] += (float)p.GetValue(MetricCatalog.ProcessHistoryFields[f]);
+                series.Values[f].Add(slot, (float)p.GetValue(MetricCatalog.ProcessHistoryFields[f]));
         }
 
         foreach (ref readonly var t in table.ObjectTypeSpan)
@@ -277,7 +281,10 @@ public sealed class HistoryStore
         foreach (var (name, series) in _names)
         {
             if (TotalScans - series.LastActiveScan > ScanCapacity)
+            {
                 _names.Remove(name);
+                _namesVersion++;
+            }
         }
     }
 
@@ -395,31 +402,69 @@ public sealed class HistoryStore
         }
     }
 
-    /// <summary>Sums matching name series per scan, then holds each scan's value until the next one.</summary>
+    /// <summary>
+    /// Sums the matching name series per scan, then holds each scan's value until the next one. Only the scans the window
+    /// needs are summed (<see cref="ScansSince"/>: a value list reading one sample sums one or two, not the whole
+    /// retention), over the names matching the pattern (<see cref="MatchingNames"/>).
+    /// </summary>
     private void UpsampleScans(string patternText, int field, long firstSample, Span<float> destination)
     {
-        var scans = ScanCount;
-        if (!_patterns.TryGetValue(patternText, out var pattern))
-            _patterns[patternText] = pattern = new NamePattern(patternText);
-
+        var names = MatchingNames(patternText);
+        var scans = ScansSince(firstSample);
         EnsureScratch();
         var sums = _scanScratch.AsSpan(0, scans);
         var one = _scratch.AsSpan(0, scans);
         sums.Clear();
-        foreach (var named in _names.Values)
+        foreach (var named in names)
         {
-            if (!pattern.IsMatch(named.Name))
-                continue;
-            CopyLatest(named.Values[field], TotalScans, ScanCapacity, one);
+            named.Values[field].CopyLatest(TotalScans, one);
             for (var i = 0; i < scans; i++)
                 sums[i] += one[i];
         }
         HoldScans(sums, firstSample, destination);
     }
 
-    private void ReadObjectType(ObjectTypeSeries series, Span<float> destination)
+    /// <summary>The names matching a pattern, cached until a name appears or is evicted.</summary>
+    private List<NameSeries> MatchingNames(string patternText)
+    {
+        if (_matches.TryGetValue(patternText, out var cached) && cached.Version == _namesVersion)
+            return cached.Names;
+        if (!_patterns.TryGetValue(patternText, out var pattern))
+            _patterns[patternText] = pattern = new NamePattern(patternText);
+        var names = cached.Names ?? [];
+        names.Clear();
+        foreach (var named in _names.Values)
+        {
+            if (pattern.IsMatch(named.Name))
+                names.Add(named);
+        }
+        _matches[patternText] = (_namesVersion, names);
+        return names;
+    }
+
+    /// <summary>
+    /// How many of the newest scans cover the samples from <paramref name="firstSample"/> on: the last scan taken at or
+    /// before it (its value holds into the window), and every later one. Scan sample indexes only grow: binary search.
+    /// </summary>
+    private int ScansSince(long firstSample)
     {
         var scans = ScanCount;
+        var firstScan = TotalScans - scans;
+        int lo = 0, hi = scans - 1, last = -1;
+        while (lo <= hi)
+        {
+            var mid = (lo + hi) >>> 1;
+            if (_scanSampleIndex[(int)((firstScan + mid) % ScanCapacity)] <= firstSample)
+                (last, lo) = (mid, mid + 1);
+            else
+                hi = mid - 1;
+        }
+        return last < 0 ? scans : scans - last;
+    }
+
+    private void ReadObjectType(ObjectTypeSeries series, Span<float> destination)
+    {
+        var scans = ScansSince(TotalSamples - destination.Length);
         EnsureScratch();
         var values = _scanScratch.AsSpan(0, scans);
         if (_objectTypes.TryGetValue(series.TypeName, out var rings))
