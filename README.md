@@ -107,11 +107,12 @@ mode, the tray icon, settings and where files live.
 | **Value list** | Label / value rows for a list of metrics. |
 | **Per-CPU graphs** | One small graph per logical processor: usage (kernel part shaded), user, kernel, DPC, interrupt time and rate, effective frequency. |
 | **GPU engines** | One graph per GPU engine (3D, Compute, Copy, Video decode/encode…), filtered by name. |
-| **Process table** | Top processes sorted by any process metric, optionally grouped by name and filtered. |
+| **Process table** | Top processes sorted by any process metric, optionally grouped by name and filtered. Right-click a process to inspect, chart, reprioritize, pin to cores, suspend, dump or end it. |
 | **Process events** | Recent process starts and exits with command lines and exit codes, including processes too short-lived for any scan. |
 | **Drivers (DPC/ISR)** | DPC and interrupt time, count and longest duration per driver. |
 | **Kernel pool tags** | Paged and non-paged pool per allocation tag, with growth: finds leaking drivers. |
 | **Kernel objects** | Live objects and handles per kernel object type, with growth: finds handle and object leaks. |
+| **Folder size** | A folder's size and file count over time, its growth and largest subfolders; rescanned on change. |
 | **Stack** | Several widgets in one area, one shown at a time; navigate with arrows, dots or `Ctrl+wheel`, or auto-cycle. |
 | **Plugin widgets** | Anything a [plugin](docs/plugins.md) provides. |
 

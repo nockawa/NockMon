@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using NockMon.Core.Folders;
 using NockMon.Core.History;
 
 namespace NockMon.Core.Sampling;
@@ -51,6 +52,7 @@ public sealed class SamplingEngine : IDisposable
     private readonly Dictionary<int, Etw.ProcessIoTotals> _scanIo = new();
     private readonly List<Etw.DriverTotals> _scanDrivers = [];
     private readonly Dictionary<int, double> _gpuByPid = new();
+    private readonly FolderScanner _folders = new();
 
     /// <param name="events">Optional kernel event stream (ETW) for disk, network and DPC/ISR metrics. Not owned.</param>
     /// <param name="gpu">Optional GPU source. Not owned.</param>
@@ -83,6 +85,12 @@ public sealed class SamplingEngine : IDisposable
 
     /// <summary>GPU engines to poll (each costs ~0.3 ms per sample): (adapter name, engine name pattern).</summary>
     public void SetWatchedGpuEngines(IEnumerable<(string Adapter, string Pattern)> engines) => _gpu?.SetWatchedEngines(engines);
+
+    /// <summary>Folders to scan in the background (their counts enter the history at each sample).</summary>
+    public void SetWatchedFolders(IEnumerable<FolderRequest> folders) => _folders.SetWatched(folders);
+
+    /// <summary>The folder scanner: last scan details (duration, unreadable folders, largest subfolders, errors), schedule.</summary>
+    public FolderScanner Folders => _folders;
 
     public SamplingOptions Options
     {
@@ -221,7 +229,7 @@ public sealed class SamplingEngine : IDisposable
                     _history = new HistoryStore(_history.Capacity, _history.ScanCapacity, _back.Cores.Length);
                 (_front, _back) = (_back, _front);
                 _front.SampleIndex = _history.TotalSamples;
-                _history.AppendSample(_front, _watched.Aggregates);
+                _history.AppendSample(_front, _watched.Aggregates, _folders.Readings);
                 if (scanned)
                 {
                     _currentTable.ScanIndex = _history.TotalScans;
@@ -278,6 +286,7 @@ public sealed class SamplingEngine : IDisposable
     public void Dispose()
     {
         Stop();
+        _folders.Dispose();
         _watched.Dispose();
         _wake.Dispose();
     }

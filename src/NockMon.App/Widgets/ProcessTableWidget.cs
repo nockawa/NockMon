@@ -1,7 +1,10 @@
 using System.Globalization;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using NockMon.Core.Layout;
 using NockMon.Core.Metrics;
+using NockMon.Core.Model;
 using NockMon.Core.Sampling;
 using NockMon.Monitoring;
 
@@ -9,7 +12,8 @@ namespace NockMon.Widgets;
 
 /// <summary>
 /// Top-N process table with configurable columns. Refreshed when a new scan arrives (or sort/display changes).
-/// Clicking a header sorts by that column (again: reverses the order).
+/// Clicking a header sorts by that column (again: reverses the order). Right-clicking a row opens the process menu
+/// (<see cref="ProcessMenu"/>); the table holds still while it is open.
 /// </summary>
 public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
 {
@@ -20,6 +24,7 @@ public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
     private long _lastScanIndex = -1;
     private int _lastDisplayVersion = -1;
     private bool _queryDirty = true;
+    private bool _menuOpen;
 
     public ProcessTableWidget(ProcessTableWidgetConfig config, MonitorService monitor)
     {
@@ -31,6 +36,7 @@ public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
             .ToArray();
         _table = new CellTable(columns, config.TopCount);
         _table.HeaderTapped += column => SortBy(_config.Columns[column].Field);
+        _table.RowRightTapped += OnRowRightTapped;
         Content = _table;
         UpdateSortIndicator();
     }
@@ -39,6 +45,8 @@ public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
 
     public void Refresh()
     {
+        if (_menuOpen)
+            return; // The rows stay where the menu's row is.
         // The table only changes with a new scan (slower than samples), a sort change or a display setting change.
         var options = new ProcessQueryOptions(_config.SortBy, _config.Descending, _config.TopCount, _config.GroupByName, _config.Filter, _config.ExcludeIdle);
         var ran = _monitor.Engine.Read((widget: this, options), static (state, snapshot, _) =>
@@ -69,6 +77,47 @@ public sealed partial class ProcessTableWidget : UserControl, IMonitorWidget
             }
         }
         _table.ClearFrom(rows.Length);
+    }
+
+    private void OnRowRightTapped(int row, FrameworkElement anchor, Windows.Foundation.Point position)
+    {
+        var rows = _query.Results;
+        if (row >= rows.Length || XamlRoot is null)
+            return;
+        var stats = rows[row].Stats;
+        var target = _config.GroupByName && rows[row].Instances > 1
+            ? new ProcessTarget(stats.Name, _monitor.Engine.Read(stats.Name, static (name, snapshot, _) =>
+            {
+                var keys = new List<ProcessKey>();
+                foreach (ref readonly var p in snapshot.ProcessSpan)
+                {
+                    if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+                        keys.Add(new ProcessKey(p.Pid, p.CreateTime));
+                }
+                return keys;
+            }))
+            : new ProcessTarget(stats.Name, [new ProcessKey(stats.Pid, stats.CreateTime)]);
+        if (target.Instances.Count == 0)
+            return; // All exited since the last scan.
+
+        var menu = ProcessMenu.Create(target, _monitor, XamlRoot, () => RowText(row));
+        _menuOpen = true;
+        _table.HighlightRow(row);
+        menu.Closed += (_, _) =>
+        {
+            _menuOpen = false;
+            _table.HighlightRow(null);
+            Refresh();
+        };
+        menu.ShowAt(anchor, new FlyoutShowOptions { Position = position });
+    }
+
+    /// <summary>Headers and the row's cells, tab-separated (pastes as two spreadsheet rows).</summary>
+    private string RowText(int row)
+    {
+        var columns = Enumerable.Range(0, _table.ColumnCount).ToArray();
+        return string.Join('	', columns.Select(_table.GetHeader)) + Environment.NewLine
+               + string.Join('	', columns.Select(c => _table.GetCell(row, c)));
     }
 
     private string FormatCell(in ProcessRow row, ProcessField field)

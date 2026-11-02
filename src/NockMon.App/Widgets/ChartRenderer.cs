@@ -9,7 +9,9 @@ using Windows.Foundation;
 
 namespace NockMon.Widgets;
 
-public sealed record ChartStyle(bool Stacked, bool ShowLegend, bool ShowGrid, ElementTheme Theme);
+/// <param name="ZeroBased">Y axis from 0 (default). False: fitted to the data's range, so a small change of a large value
+/// (a folder's size) shows; not with <paramref name="Stacked"/>.</param>
+public sealed record ChartStyle(bool Stacked, bool ShowLegend, bool ShowGrid, ElementTheme Theme, bool ZeroBased = true);
 
 /// <summary>
 /// Time-series rendering: newest sample at the right edge, a window of <c>windowSamples</c> across the width
@@ -36,10 +38,10 @@ public static class ChartRenderer
             return;
 
         var unit = series[0].Source.Info.Unit;
-        var yMax = ComputeMax(series, unit, style.Stacked, monitor);
+        var (yMin, yMax) = style.ZeroBased || style.Stacked ? (0d, ComputeMax(series, unit, style.Stacked, monitor)) : FitRange(series);
 
         if (style.ShowGrid)
-            DrawGrid(ds, plot, yMax, unit, style.Theme, monitor);
+            DrawGrid(ds, plot, yMin, yMax, unit, style.Theme, monitor);
 
         var dx = (float)(plot.Width / Math.Max(1, windowSamples - 1));
         Span<float> stackBase = windowSamples <= 8192 ? stackalloc float[windowSamples] : new float[windowSamples];
@@ -52,7 +54,7 @@ public static class ChartRenderer
                 continue;
             var values = s.Values.AsSpan(0, s.Count);
             var baseline = stackBase[..s.Count];
-            var n = TopPoints(plot, values, baseline, style.Stacked, dx, yMax, out var top, out var bottom);
+            var n = TopPoints(plot, values, baseline, style.Stacked, dx, yMin, yMax, out var top, out var bottom);
 
             // Area: one polygon (top points, then the baseline backwards): a single interop call.
             var polygon = Polygon(2 * n);
@@ -88,20 +90,21 @@ public static class ChartRenderer
     /// Top and baseline points, newest at the right edge, downsampled to pixel columns: per column, the sample with the
     /// highest top (spikes stay visible) and its baseline.
     /// </summary>
-    private static int TopPoints(Rect plot, ReadOnlySpan<float> values, ReadOnlySpan<float> baseline, bool stacked, float dx, double yMax,
+    private static int TopPoints(Rect plot, ReadOnlySpan<float> values, ReadOnlySpan<float> baseline, bool stacked, float dx, double yMin, double yMax,
         out Vector2[] top, out Vector2[] bottom)
     {
         var right = (float)(plot.X + plot.Width);
         var plotBottom = (float)(plot.Y + plot.Height);
         var plotTop = (float)plot.Y;
-        var scale = (float)(plot.Height / yMax);
+        var scale = (float)(plot.Height / (yMax - yMin));
+        var offset = (float)yMin;
         var startX = right - (values.Length - 1) * dx;
         var bucket = Math.Max(1, (int)Math.Ceiling(1 / dx));
         var capacity = (values.Length + bucket - 1) / bucket;
         top = _top is { } t && t.Length >= capacity ? t : _top = new Vector2[Math.Max(capacity, 1024)];
         bottom = _bottom is { } b && b.Length >= capacity ? b : _bottom = new Vector2[Math.Max(capacity, 1024)];
 
-        float Y(float v) => Math.Max(plotTop, plotBottom - v * scale);
+        float Y(float v) => Math.Clamp(plotBottom - (v - offset) * scale, plotTop, plotBottom);
 
         var n = 0;
         for (var i = 0; i < values.Length; i += bucket)
@@ -221,7 +224,22 @@ public static class ChartRenderer
         return Math.Clamp(AxisScale.NiceCeiling(max, unit), 1, Math.Max(1, monitor.LogicalProcessors));
     }
 
-    private static void DrawGrid(CanvasDrawingSession ds, Rect plot, double yMax, MetricUnit unit, ElementTheme theme, MonitorService monitor)
+    /// <summary>Visible values' range with a 15 % margin each side (at least 1 % of the value, so a flat line sits mid-chart), floored at 0.</summary>
+    private static (double Min, double Max) FitRange(IReadOnlyList<SeriesData> series)
+    {
+        double min = double.MaxValue, max = double.MinValue;
+        foreach (var s in series)
+        {
+            foreach (var v in s.Values.AsSpan(0, s.Count))
+                (min, max) = (Math.Min(min, v), Math.Max(max, v));
+        }
+        if (min > max)
+            return (0, 1);
+        var range = Math.Max(max - min, Math.Max(Math.Abs(max) * 0.01, 1));
+        return (Math.Max(0, min - range * 0.15), max + range * 0.15);
+    }
+
+    private static void DrawGrid(CanvasDrawingSession ds, Rect plot, double yMin, double yMax, MetricUnit unit, ElementTheme theme, MonitorService monitor)
     {
         var grid = Palette.Grid(theme);
         for (var i = 0; i <= 4; i++)
@@ -230,6 +248,8 @@ public static class ChartRenderer
             ds.DrawLine((float)plot.X, y, (float)(plot.X + plot.Width), y, grid, 1);
         }
         ds.DrawText(monitor.Format(yMax, unit), (float)plot.X + 2, (float)plot.Y + 1, Palette.SubtleText(theme), AxisFormat);
+        if (yMin > 0)
+            ds.DrawText(monitor.Format(yMin, unit), (float)plot.X + 2, (float)(plot.Y + plot.Height) - 13, Palette.SubtleText(theme), AxisFormat);
     }
 
     /// <returns>Legend height.</returns>

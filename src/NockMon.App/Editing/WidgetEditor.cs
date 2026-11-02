@@ -40,6 +40,7 @@ internal static class WidgetEditor
             DriverTableWidgetConfig d => BuildDrivers(panel, d),
             ProcessEventsWidgetConfig e => BuildProcessEvents(panel, e),
             GpuEnginesWidgetConfig g => BuildGpuEngines(panel, g, context),
+            FolderWidgetConfig f => BuildFolder(panel, f),
             PluginWidgetConfig p => BuildPlugin(panel, p),
             ObjectTypesWidgetConfig o => BuildSortedTable(panel, o.TopCount, o.SortBy, o.Descending, Docs.Of,
                 (top, sort, desc) => (o.TopCount, o.SortBy, o.Descending) = (top, sort, desc)),
@@ -271,6 +272,40 @@ internal static class WidgetEditor
             config.EnginePattern = pattern.Text.Trim();
             config.WindowSeconds = (int)((ComboBoxItem)window.SelectedItem).Tag;
             config.Columns = double.IsNaN(columns.Value) ? 0 : (int)columns.Value;
+            return null;
+        };
+    }
+
+    private static Func<string?> BuildFolder(StackPanel panel, FolderWidgetConfig config)
+    {
+        var scope = new FolderScopeEditor(config.Scope);
+        var minimum = Core.Folders.FolderScanner.MinInterval.TotalSeconds;
+        var interval = new NumberBox
+        {
+            Header = "Rescan every (seconds)", Value = config.ScanSeconds, Minimum = minimum, Maximum = 86_400,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 180,
+        };
+        var watch = new ToggleSwitch { Header = "Rescan on change", IsOn = config.WatchChanges };
+        var window = WindowPicker("Time window", config.WindowSeconds);
+        var files = new ToggleSwitch { Header = "Show file count", IsOn = config.ShowFiles };
+        panel.Children.Add(scope);
+        panel.Children.Add(Row(interval, watch));
+        panel.Children.Add(Row(window, files));
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Folders are scanned in the background, one at a time, never sooner than nine times the last scan's duration " +
+                   "(at most 10 % of a core). A change rescans after 2 s, at most every 5 s.",
+            TextWrapping = TextWrapping.Wrap, Opacity = 0.7, FontSize = 12,
+        });
+        return () =>
+        {
+            if (scope.Build(out var error) is not { } s)
+                return error;
+            (config.Path, config.Recursive, config.Include, config.Exclude, config.SizeOnDisk) = (s.Path, s.Recursive, s.Include, s.Exclude, s.SizeOnDisk);
+            config.ScanSeconds = double.IsNaN(interval.Value) ? FolderWidgetConfig.DefaultScanSeconds : (int)Math.Max(minimum, interval.Value);
+            config.WatchChanges = watch.IsOn;
+            config.WindowSeconds = (int)((ComboBoxItem)window.SelectedItem).Tag;
+            config.ShowFiles = files.IsOn;
             return null;
         };
     }

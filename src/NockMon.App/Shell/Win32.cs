@@ -23,6 +23,13 @@ internal static partial class Win32
     [LibraryImport("user32.dll")]
     public static partial uint GetDpiForWindow(nint hwnd);
 
+    /// <summary>Shows a file's Properties sheet (SHOP_FILEPATH).</summary>
+    public static bool ShowFileProperties(nint owner, string path) => SHObjectProperties(owner, 2, path, null);
+
+    [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SHObjectProperties(nint owner, uint type, string objectName, string? page);
+
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetWindowRect(nint hwnd, out Rect rect);

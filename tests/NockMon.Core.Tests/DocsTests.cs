@@ -18,6 +18,7 @@ public class DocsTests
         .. Enum.GetValues<ObjectTypeField>().Select(Docs.Of),
         .. Enum.GetValues<ObjectTypeMetric>().Select(Docs.Of),
         .. Enum.GetValues<PoolTagField>().Select(Docs.Of),
+        .. Enum.GetValues<FolderMetric>().Select(Docs.Of),
         .. Enum.GetValues<WidgetKind>().Select(Docs.Of),
     ];
 

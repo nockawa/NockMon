@@ -72,6 +72,34 @@ One graph per engine of a GPU (3D, Compute, Copy, Video decode/encode…), 0–1
 
 Engine names arrive a moment after start ("Engine N" until then).
 
+### Folder size
+
+A folder's size and file count over time: a downloads or temp folder filling up, a build output, a log or cache folder
+that grows, a backup target. Shows the size, the file count, the growth over the window ("+1.2 GB, +340 files in 1 h")
+and the size over time, with an axis fitted to the data so growth shows on a large folder. Hover for the last scan
+(when, how long, unreadable folders) and the largest subfolders, also listed under the chart when the widget is tall
+enough. Double-click opens the folder. Default size 5×4, minimum 2×2.
+
+| Option | Meaning |
+|---|---|
+| Folder | Path (typed, with `%TEMP%`-style variables, or picked with Browse). |
+| Include files | File name patterns counted: `*.log; *.tmp`. All files when empty. |
+| Exclude folders | Folder names skipped with their content: `node_modules; .git; bin; obj`. |
+| Subfolders | Walk the whole tree (default) or the folder only. |
+| Size on disk | Space taken on the volume (whole clusters; less for compressed, sparse and online-only files) instead of the files' sizes. |
+| Rescan every | Longest time between two scans (default 60 s, at least 5 s). |
+| Rescan on change | A change in the folder rescans it after 2 s, at most every 5 s (default on). |
+| Window | Time span of the chart and the growth (default 1 h). |
+| Show file count | The file count next to the size. |
+
+Folders are scanned in the background, one at a time, never sooner than nine times the last scan's duration after it
+ended: a huge tree costs at most about 10 % of one core. Junctions and folder symbolic links are not followed (no loops,
+no double counting); OneDrive folders are walked. Folders that cannot be read are counted in the tooltip, not fatal. The
+history starts at the folder's first scan.
+
+Folder size, files and subfolders are also series for charts, values and value lists (source **Folder**, with the same
+options), and AI agents can read them (`folder.*` metrics) for the folders a layout watches.
+
 ### Process table
 
 Top processes of the latest scan, sorted by any metric. Default size 10×8, minimum 3×2. Refreshed at the scan rate.
@@ -84,6 +112,25 @@ Top processes of the latest scan, sorted by any metric. Default size 10×8, mini
 | Group by name | Sums processes sharing an image name into one row (browsers, `svchost.exe`): the Instances column counts them. |
 | Exclude Idle | Hides the System Idle Process, which otherwise tops a CPU sort on a quiet machine. |
 | Filter | Keeps matching processes only (name pattern). |
+
+Right-click a row for the process menu. The table holds still while the menu is open. On a grouped row, actions apply
+to every process of that name.
+
+| Command | What it does |
+|---|---|
+| Details… | Path, version, command line, parent, account, integrity level, elevation, protection, priority, critical flag. Copy puts it all on the clipboard. |
+| Open file location, Properties | Explorer with the executable selected; its Properties sheet. |
+| Copy | Name, PID(s), path, command line(s), or the row as shown (tab-separated). |
+| Chart | Adds a chart of one metric (CPU, memory, I/O, disk, network, GPU, handles, threads) of every process of that name to the board. |
+| Priority | Realtime (after a confirmation) to Idle. |
+| Affinity | All processors, P-cores or E-cores only (hybrid CPUs), or a custom set. Up to 64 logical processors. |
+| Suspend, Resume | Freezes or thaws every thread of the process. |
+| Create dump | Minidump or full dump to a file you choose. One process at a time (not on grouped rows). |
+| End process, End process tree | After a confirmation. The tree is the process and its descendants as of the latest scan. |
+
+Every action first checks that the PID still belongs to the same process (PIDs are reused). Critical processes (ending
+one crashes Windows), kernel processes and NockMon itself cannot be ended or suspended. The Desktop Window Manager
+cannot be suspended either, because the screen would freeze. Protected processes refuse most actions: the error says so.
 
 ### Process events
 
@@ -166,6 +213,8 @@ values only.
   fan speed, memory clock and power percentage when the driver exposes them. NVIDIA GPUs add utilization, power in
   watts, clocks and encoder/decoder load through NVML.
 - **objectType**: a kernel object type (chart target: its name, e.g. `Token`).
+- **folder**: a folder watched by a Folder size widget or a folder series (target: its path). Recorded from the folder's
+  first scan, only while a layout uses it.
 - **driver**, **poolTag**: columns of the Drivers and Kernel pool tags widgets.
 
 ### system
@@ -292,6 +341,14 @@ values only.
 |---|---|---|---|---|
 | `objectType.Objects` | Kernel objects: objects | count | yes | Live kernel objects of the type (e.g. Token, Process, File). |
 | `objectType.Handles` | Kernel objects: handles | count | yes | Open handles to kernel objects of the type, all processes. |
+
+### folder
+
+| Id | Name | Unit | Chartable | Meaning |
+|---|---|---|---|---|
+| `folder.Size` | Folder size | MB | yes | Total size of the files in the folder (and its subfolders when included). |
+| `folder.Files` | Folder files | count | yes | Number of files in the folder (and its subfolders when included). |
+| `folder.Folders` | Folder subfolders | count | yes | Number of subfolders in the folder (all levels when subfolders are included). |
 
 ### driver
 

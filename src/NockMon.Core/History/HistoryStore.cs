@@ -36,6 +36,9 @@ public sealed class HistoryStore
     private readonly HashSet<string> _seenPatterns = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (float[] Objects, float[] Handles)> _objectTypes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, GpuRings> _gpus = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly int FolderMetricCount = Enum.GetValues<FolderMetric>().Length;
+    private readonly Dictionary<Folders.FolderScope, FolderRings> _folders = [];
+    private readonly HashSet<Folders.FolderScope> _seenFolders = [];
     private float[] _gpuScratch = [];
     private float[] _scanScratch = [];
     private float[] _scratch = [];
@@ -94,8 +97,11 @@ public sealed class HistoryStore
     /// <summary>Kernel object type names seen in scans.</summary>
     public IEnumerable<string> ObjectTypeNames => _objectTypes.Keys;
 
-    /// <summary>Appends a fast sample: system, cores, and the watched-pattern aggregates of this tick.</summary>
-    public void AppendSample(Snapshot snapshot, IReadOnlyList<WatchedAggregate> watched)
+    /// <summary>
+    /// Appends a fast sample: system, cores, the watched-pattern aggregates of this tick, and the latest counts of the
+    /// watched folders (held from scan to scan; a folder no longer listed loses its history).
+    /// </summary>
+    public void AppendSample(Snapshot snapshot, IReadOnlyList<WatchedAggregate> watched, IReadOnlyList<Folders.FolderReading>? folders = null)
     {
         if (snapshot.Cores.Length != CoreCount)
             throw new ArgumentException($"Snapshot has {snapshot.Cores.Length} cores, history expects {CoreCount}.", nameof(snapshot));
@@ -138,8 +144,49 @@ public sealed class HistoryStore
                 rings.Engines[e][slot] = (float)gpu.Engines[e];
         }
 
+        AppendFolders(slot, folders ?? []);
+
         TotalSamples++;
     }
+
+    private sealed class FolderRings(int capacity, long firstSample)
+    {
+        public readonly float[][] Values = CreateBuffers(FolderMetricCount, capacity);
+
+        /// <summary>Sample index of the first value (the folder's first scan after it started being watched).</summary>
+        public readonly long FirstSample = firstSample;
+    }
+
+    private void AppendFolders(int slot, IReadOnlyList<Folders.FolderReading> folders)
+    {
+        _seenFolders.Clear();
+        foreach (var (scope, result) in folders)
+        {
+            if (!_folders.TryGetValue(scope, out var rings))
+                _folders[scope] = rings = new FolderRings(Capacity, TotalSamples);
+            for (var m = 0; m < FolderMetricCount; m++)
+                rings.Values[m][slot] = (float)result.Value((FolderMetric)m);
+            _seenFolders.Add(scope);
+        }
+        foreach (var scope in _folders.Keys)
+        {
+            if (!_seenFolders.Contains(scope))
+                _folders.Remove(scope);
+        }
+    }
+
+    /// <summary>Samples since the folder's first scan only: a partial history, not zeros (a size starting at 0 would read as growth).</summary>
+    private int ReadFolder(FolderSeries series, Span<float> destination)
+    {
+        if (!_folders.TryGetValue(series.Scope, out var rings))
+            return 0;
+        var n = (int)Math.Min(destination.Length, TotalSamples - rings.FirstSample);
+        CopyLatest(rings.Values[(int)series.Metric], TotalSamples, Capacity, destination[..n]);
+        return n;
+    }
+
+    /// <summary>Folders currently held in history.</summary>
+    public IEnumerable<Folders.FolderScope> FolderScopes => _folders.Keys;
 
     private sealed class GpuRings(int capacity, int engines)
     {
@@ -235,9 +282,14 @@ public sealed class HistoryStore
     }
 
     /// <summary>Copies the latest samples of <paramref name="series"/>, oldest first, into <paramref name="destination"/>.</summary>
-    /// <returns>Number of samples written: min(destination length, <see cref="Count"/>).</returns>
+    /// <returns>
+    /// Number of samples written: min(destination length, <see cref="Count"/>); for a folder, only the samples since its
+    /// first scan (none while it is not watched).
+    /// </returns>
     public int Read(SeriesRef series, Span<float> destination)
     {
+        if (series is FolderSeries folder)
+            return ReadFolder(folder, destination[..Math.Min(destination.Length, Count)]);
         var n = Math.Min(destination.Length, Count);
         var dst = destination[..n];
         switch (series)

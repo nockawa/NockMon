@@ -387,10 +387,28 @@ public sealed class LayoutAgent
                     throw new AgentException($"Process field {p.Field} cannot be charted (no history). Chartable: {string.Join(", ", MetricCatalog.ProcessHistoryFields)}.");
                 case ProcessSeries p when string.IsNullOrWhiteSpace(p.Pattern):
                     throw new AgentException("A process series needs a pattern (image name, wildcards allowed).");
+                case FolderSeries f:
+                    ValidateFolder(f.Scope);
+                    break;
             }
+        }
+        if (widget is FolderWidgetConfig folder)
+        {
+            ValidateFolder(folder.Scope);
+            if (folder.ScanSeconds < (int)Folders.FolderScanner.MinInterval.TotalSeconds)
+                throw new AgentException($"scanSeconds must be at least {Folders.FolderScanner.MinInterval.TotalSeconds:0}.");
         }
         if (widget is PluginWidgetConfig plugin && PluginCatalog.Find(plugin) is null)
             throw new AgentException($"Plugin widget '{plugin.Plugin}/{plugin.Widget}' is not loaded (list_widget_kinds lists the available ones).");
+    }
+
+    /// <summary>The folder must exist now: a typo would otherwise only show as "Folder not found" on the board.</summary>
+    private static void ValidateFolder(Folders.FolderScope scope)
+    {
+        if (string.IsNullOrWhiteSpace(scope.Path))
+            throw new AgentException("A folder needs a path (\"path\").");
+        if (!Directory.Exists(scope.FullPath))
+            throw new AgentException($"Folder not found: {scope.FullPath}.");
     }
 
     private string? Icon(string? icon)

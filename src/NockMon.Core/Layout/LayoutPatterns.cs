@@ -36,6 +36,19 @@ public static class LayoutPatterns
         return result;
     }
 
+    /// <summary>
+    /// Folders a layout needs scanned: folder widgets (their interval and change watching) and folder series of charts,
+    /// values and value lists (every <see cref="FolderWidgetConfig.DefaultScanSeconds"/>, no watching). The scanner merges
+    /// requests for the same scope.
+    /// </summary>
+    public static IEnumerable<Folders.FolderRequest> Folders(LayoutDocument layout)
+    {
+        foreach (var widget in StackWidgetConfig.Leaves(layout.AllWidgets).OfType<FolderWidgetConfig>())
+            yield return new(widget.Scope, TimeSpan.FromSeconds(widget.ScanSeconds), widget.WatchChanges);
+        foreach (var series in Series(layout).OfType<FolderSeries>())
+            yield return new(series.Scope, TimeSpan.FromSeconds(FolderWidgetConfig.DefaultScanSeconds), false);
+    }
+
     private static IEnumerable<SeriesRef> Series(LayoutDocument layout) => StackWidgetConfig.Leaves(layout.AllWidgets).SelectMany(w => w switch
     {
         ChartWidgetConfig c => c.Series.Select(s => s.Source),

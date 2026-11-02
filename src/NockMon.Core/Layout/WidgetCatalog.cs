@@ -14,6 +14,7 @@ public enum WidgetKind
     ProcessEvents,
     ObjectTypes,
     GpuEngines,
+    Folder,
 
     /// <summary>Created by dropping a widget onto another, not from the add menu.</summary>
     Stack,
@@ -40,6 +41,7 @@ public static class WidgetCatalog
         ProcessEventsWidgetConfig => WidgetKind.ProcessEvents,
         ObjectTypesWidgetConfig => WidgetKind.ObjectTypes,
         GpuEnginesWidgetConfig => WidgetKind.GpuEngines,
+        FolderWidgetConfig => WidgetKind.Folder,
         StackWidgetConfig => WidgetKind.Stack,
         PluginWidgetConfig => WidgetKind.Plugin,
         _ => throw new ArgumentException($"Unknown widget {config.GetType().Name}.", nameof(config)),
@@ -57,6 +59,7 @@ public static class WidgetCatalog
         WidgetKind.ProcessEvents => "Process events",
         WidgetKind.ObjectTypes => "Kernel objects",
         WidgetKind.GpuEngines => "GPU engines",
+        WidgetKind.Folder => "Folder size",
         WidgetKind.Stack => "Stack",
         WidgetKind.Plugin => "Plugin widget",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
@@ -74,6 +77,7 @@ public static class WidgetCatalog
         WidgetKind.ProcessEvents => new(10, 6),
         WidgetKind.ObjectTypes => new(8, 6),
         WidgetKind.GpuEngines => new(8, 4),
+        WidgetKind.Folder => new(5, 4),
         WidgetKind.Stack => new(1, 1),
         WidgetKind.Plugin => new(4, 3),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
@@ -91,6 +95,7 @@ public static class WidgetCatalog
         WidgetKind.ProcessEvents => new(3, 2),
         WidgetKind.ObjectTypes => new(3, 2),
         WidgetKind.GpuEngines => new(2, 2),
+        WidgetKind.Folder => new(2, 2),
         WidgetKind.Stack => new(1, 1),
         WidgetKind.Plugin => new(1, 1),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
@@ -127,6 +132,9 @@ public static class WidgetCatalog
         return new GridSize(columns, rows);
     }
 
+    /// <summary>The user's Downloads folder (a folder whose growth is worth watching): the default of a new folder widget.</summary>
+    private static string DownloadsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+
     /// <summary>New widget with default settings, placed at <paramref name="bounds"/>.</summary>
     public static WidgetConfig Create(WidgetKind kind, GridRect bounds) => kind switch
     {
@@ -145,6 +153,7 @@ public static class WidgetCatalog
         WidgetKind.ProcessEvents => new ProcessEventsWidgetConfig { Title = "Process events", Bounds = bounds },
         WidgetKind.ObjectTypes => new ObjectTypesWidgetConfig { Title = "Kernel objects", Bounds = bounds },
         WidgetKind.GpuEngines => new GpuEnginesWidgetConfig { Title = "GPU engines", Bounds = bounds },
+        WidgetKind.Folder => new FolderWidgetConfig { Title = "Downloads", Bounds = bounds, Path = DownloadsPath },
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 }

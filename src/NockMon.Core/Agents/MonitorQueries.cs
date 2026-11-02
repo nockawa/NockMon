@@ -80,7 +80,8 @@ public sealed class MonitorQueries(SamplingEngine engine, Func<bool> shareComman
 
     public MetricHistory GetMetricHistory(string metric, string? target, double minutes, double endMinutesAgo, int points)
     {
-        var series = MetricIds.ToSeries(metric, target, engine.GpuAdapters.Select(a => a.Name).ToList(), engine.LogicalProcessorCount);
+        var series = MetricIds.ToSeries(metric, target, engine.GpuAdapters.Select(a => a.Name).ToList(), engine.LogicalProcessorCount,
+            engine.Folders.Scopes);
         var interval = engine.Interval;
         points = Math.Clamp(points, 1, MaxPoints);
         var (values, times, scanned) = engine.Read((series, minutes, endMinutesAgo), (state, _, history) =>
@@ -92,7 +93,10 @@ public sealed class MonitorQueries(SamplingEngine engine, Func<bool> shareComman
             var stamps = new DateTime[tail];
             history.ReadTimestamps(stamps);
             var watched = state.series is ProcessSeries p && history.IsWatched(p.Pattern) && MetricCatalog.IsWatchedField(p.Field);
-            return (all[..n], stamps[..n], state.series is ProcessSeries or ObjectTypeSeries && !watched);
+            var start = 0; // A folder's history starts at its first scan: drop the samples before it.
+            while (start < n && float.IsNaN(all[start]))
+                start++;
+            return (all[start..n], stamps[start..n], state.series is ProcessSeries or ObjectTypeSeries && !watched);
         });
         if (values.Length == 0)
             throw new AgentException(minutes <= 0 ? "minutes must be positive." : "No history in that time range yet.");
@@ -290,7 +294,12 @@ public sealed class MonitorQueries(SamplingEngine engine, Func<bool> shareComman
     private static float[] ReadSeries(HistoryStore history, SeriesRef series, int count)
     {
         var values = new float[Math.Min(count, history.Count)];
-        history.Read(series, values);
+        var n = history.Read(series, values);
+        if (n < values.Length) // Partial history (a folder, since its first scan): newest last, the older part missing.
+        {
+            values.AsSpan(0, n).CopyTo(values.AsSpan(values.Length - n));
+            values.AsSpan(0, values.Length - n).Fill(float.NaN);
+        }
         return values;
     }
 

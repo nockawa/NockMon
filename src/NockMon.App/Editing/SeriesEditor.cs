@@ -14,10 +14,10 @@ public sealed record EditorContext(
     IReadOnlyList<string> ObjectTypeNames,
     IReadOnlyList<GpuAdapterInfo> Gpus);
 
-/// <summary>Edits one series: source (system / CPU / process / kernel object / GPU) × metric × target, plus label and color.</summary>
+/// <summary>Edits one series: source (system / CPU / process / kernel object / GPU / folder) × metric × target, plus label and color.</summary>
 internal sealed class SeriesEditor : StackPanel
 {
-    private enum Scope { System, Cpu, Process, KernelObject, Gpu }
+    private enum Scope { System, Cpu, Process, KernelObject, Gpu, Folder }
 
     private readonly EditorContext _context;
     private readonly ComboBox _scope = new() { Header = "Source", MinWidth = 140 };
@@ -29,6 +29,7 @@ internal sealed class SeriesEditor : StackPanel
     private readonly AutoSuggestBox _engine = new() { Header = "Engine pattern", PlaceholderText = "Compute*; 3D; Video*", MinWidth = 200 };
     private readonly TextBox _label = new() { Header = "Label", PlaceholderText = "Automatic", MinWidth = 160 };
     private readonly ComboBox _color = new() { Header = "Color", MinWidth = 120 };
+    private readonly FolderScopeEditor _folder = new(new Core.Folders.FolderScope(""));
     private readonly DocPanel _doc = new();
 
     public SeriesEditor(SeriesRef source, string? label, string? color, EditorContext context, bool showLabelAndColor)
@@ -78,6 +79,7 @@ internal sealed class SeriesEditor : StackPanel
 
         Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _scope, _adapter, _metric } });
         Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _core, _pattern, _objectType, _engine } });
+        Children.Add(_folder);
         Children.Add(_doc);
         if (showLabelAndColor)
             Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _label, _color } });
@@ -134,6 +136,10 @@ internal sealed class SeriesEditor : StackPanel
                     return null;
                 }
                 return new GpuSeries(m, adapter.Name, m == GpuMetric.Engine ? _engine.Text.Trim() : null);
+            case Scope.Folder when metric is FolderMetric m:
+                if (_folder.Build(out error) is not { } folder)
+                    return null;
+                return new FolderSeries(m, folder.Path, folder.Recursive, folder.Include, folder.Exclude, folder.SizeOnDisk);
             default:
                 error = "Select a metric.";
                 return null;
@@ -159,6 +165,7 @@ internal sealed class SeriesEditor : StackPanel
             ProcessSeries s => (Scope.Process, s.Field),
             ObjectTypeSeries s => (Scope.KernelObject, s.Metric),
             GpuSeries s => (Scope.Gpu, s.Metric),
+            FolderSeries s => (Scope.Folder, s.Metric),
             _ => (Scope.System, SystemMetric.Cpu),
         };
         _core.Value = source is CoreSeries cs ? cs.Core : 0;
@@ -166,6 +173,8 @@ internal sealed class SeriesEditor : StackPanel
             _pattern.Text = ps.Pattern;
         if (source is ObjectTypeSeries os)
             _objectType.Text = os.TypeName;
+        if (source is FolderSeries fs)
+            _folder.Load(fs.Scope);
         if (source is GpuSeries gs)
         {
             _adapter.SelectedItem = _adapter.Items.Cast<ComboBoxItem>().FirstOrDefault(i => ((GpuAdapterInfo)i.Tag).Name == gs.Adapter);
@@ -188,6 +197,7 @@ internal sealed class SeriesEditor : StackPanel
             Scope.Cpu => Enum.GetValues<CoreMetric>().Select(m => ((object)m, MetricCatalog.Get(m))),
             Scope.Process => MetricCatalog.ProcessHistoryFields.Select(f => ((object)f, MetricCatalog.Get(f))),
             Scope.KernelObject => Enum.GetValues<ObjectTypeMetric>().Select(m => ((object)m, new ObjectTypeSeries("", m).Info with { DisplayName = m.ToString() })),
+            Scope.Folder => Enum.GetValues<FolderMetric>().Select(m => ((object)m, Core.Folders.FolderScope.Info(m))),
             _ => Enum.GetValues<GpuMetric>().Select(m => ((object)m, MetricCatalog.Get(m))),
         };
         foreach (var (value, info) in metrics)
@@ -208,6 +218,7 @@ internal sealed class SeriesEditor : StackPanel
         _objectType.Visibility = Show(scope == Scope.KernelObject);
         _adapter.Visibility = Show(scope == Scope.Gpu);
         _engine.Visibility = Show(scope == Scope.Gpu && (_metric.SelectedItem as ComboBoxItem)?.Tag is GpuMetric.Engine);
+        _folder.Visibility = Show(scope == Scope.Folder);
     }
 
     private static Doc DocOf(object metric) => metric switch
@@ -217,6 +228,7 @@ internal sealed class SeriesEditor : StackPanel
         ProcessField f => Docs.Of(f),
         ObjectTypeMetric m => Docs.Of(m),
         GpuMetric m => Docs.Of(m),
+        FolderMetric m => Docs.Of(m),
         _ => throw new ArgumentException($"Unknown metric {metric}.", nameof(metric)),
     };
 

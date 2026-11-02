@@ -9,6 +9,7 @@ namespace NockMon.Core.Metrics;
 [JsonDerivedType(typeof(ProcessSeries), "process")]
 [JsonDerivedType(typeof(ObjectTypeSeries), "objectType")]
 [JsonDerivedType(typeof(GpuSeries), "gpu")]
+[JsonDerivedType(typeof(FolderSeries), "folder")]
 public abstract record SeriesRef
 {
     public abstract MetricInfo Info { get; }
@@ -62,6 +63,27 @@ public sealed record ObjectTypeSeries(string TypeName, ObjectTypeMetric Metric) 
         Metric == ObjectTypeMetric.Objects ? "Objects" : "Handles", MetricUnit.Count, true);
 
     public override string DefaultLabel => Info.DisplayName;
+}
+
+public enum FolderMetric
+{
+    Size,
+    Files,
+    Folders,
+}
+
+/// <summary>
+/// A folder's size, file count or subfolder count, scanned in the background while a layout uses it (see
+/// <see cref="Folders.FolderScanner"/>). The scan options are part of the series: the same path with other filters is
+/// another series.
+/// </summary>
+public sealed record FolderSeries(FolderMetric Metric, string Path, bool Recursive = true, string? Include = null, string? Exclude = null,
+    bool SizeOnDisk = false) : SeriesRef
+{
+    [JsonIgnore] public Folders.FolderScope Scope => new(Path, Recursive, Include, Exclude, SizeOnDisk);
+
+    public override MetricInfo Info => Folders.FolderScope.Info(Metric);
+    public override string DefaultLabel => $"{Scope.Name} {Info.ShortName.ToLowerInvariant()}";
 }
 
 /// <summary>Sum of <paramref name="Field"/> over all processes whose image name matches <paramref name="Pattern"/> (see <see cref="Model.NamePattern"/>).</summary>

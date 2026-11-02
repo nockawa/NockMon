@@ -62,6 +62,8 @@ public sealed partial class MainWindow : Window
         SetAlwaysOnTop(session.Settings.AlwaysOnTop);
 
         Plugins.PluginWidgetView.OpenPluginsRequested += () => OpenPlugins(0);
+        Widgets.ProcessMenu.ChartRequested += AddProcessChart;
+        Widgets.ProcessMenu.MessageRaised += ShowInfo;
         SetUpTabs();
         SetUpAgents();
 
@@ -118,6 +120,7 @@ public sealed partial class MainWindow : Window
     {
         _monitor.Engine.SetWatchedPatterns(LayoutPatterns.Watched(_session.Current));
         _monitor.Engine.SetWatchedGpuEngines(LayoutPatterns.GpuEngines(_session.Current, _monitor.Engine.GpuAdapters));
+        _monitor.Engine.SetWatchedFolders(LayoutPatterns.Folders(_session.Current));
     }
 
     private static void SelectByTag(ComboBox picker, int value) =>
@@ -315,6 +318,9 @@ public sealed partial class MainWindow : Window
             return;
         SavePlacement();
         _compact = compact;
+        // A double-click toggles the mode on its second press, which started a drag: the window then moves or resizes
+        // under the cursor and the release never reaches the board.
+        EndCompactDrag();
         Toolbar.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         Info.IsOpen = false;
         UpdateRail();
@@ -354,6 +360,11 @@ public sealed partial class MainWindow : Window
     {
         if (_compactDrag is not { } drag || !Win32.GetCursorPos(out var cursor))
             return;
+        if (!_compact || !e.GetCurrentPoint(Board).Properties.IsLeftButtonPressed)
+        {
+            EndCompactDrag(); // The release was missed (outside the window, or lost to a mode change).
+            return;
+        }
         int dx = cursor.X - drag.Cursor.X, dy = cursor.Y - drag.Cursor.Y;
         if (Math.Abs(dx) + Math.Abs(dy) < 4 && AppWindow.Position == drag.Window)
             return; // Below the drag threshold: still a click.
@@ -362,7 +373,9 @@ public sealed partial class MainWindow : Window
         AppWindow.Move(new PointInt32(drag.Window.X + dx, drag.Window.Y + dy));
     }
 
-    private void OnBoardPointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    private void OnBoardPointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => EndCompactDrag();
+
+    private void EndCompactDrag()
     {
         if (_compactDrag is null)
             return;
@@ -734,6 +747,31 @@ public sealed partial class MainWindow : Window
         _session.Current.Widgets.Add(WidgetCatalog.Create(kind, spot.Value));
         Board.Rebuild();
         UpdateWatchedPatterns();
+    }
+
+    /// <summary>A chart of one metric of every process of a name (process menu), at the first free spot; kept in the layout.</summary>
+    private void AddProcessChart(string name, Core.Metrics.ProcessField field)
+    {
+        var bounds = Board.PlacementBounds;
+        var spot = BoardRules.FindFreeSpot(_session.Current.Widgets, WidgetCatalog.DefaultSize(WidgetKind.Chart), bounds.Columns, bounds.Rows)
+                   ?? BoardRules.FindFreeSpot(_session.Current.Widgets, WidgetCatalog.MinSize(WidgetKind.Chart), bounds.Columns, bounds.Rows);
+        if (spot is null)
+        {
+            ShowInfo(InfoBarSeverity.Warning, "No free space", "No room for a chart in the visible board. Enlarge the window or make room.");
+            return;
+        }
+        var info = Core.Metrics.MetricCatalog.Get(field);
+        var title = $"{Path.GetFileNameWithoutExtension(name)} {info.ShortName}";
+        _session.Current.Widgets.Add(new ChartWidgetConfig
+        {
+            Title = title,
+            Bounds = spot.Value,
+            Series = [new ChartSeriesConfig { Source = new Core.Metrics.ProcessSeries(field, name) }],
+        });
+        Board.Rebuild();
+        UpdateWatchedPatterns();
+        Run(_session.SaveCurrent);
+        ShowInfo(InfoBarSeverity.Success, "Chart added", $"'{title}': {info.DisplayName} of every {name} process. Its history starts now.");
     }
 
     /// <summary>Copy of a widget (same settings and size) at the first free spot of the visible board.</summary>
