@@ -24,9 +24,14 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <NockMonSdkVersion Condition="'$(NockMonSdkVersion)' == ''">1.0.0</NockMonSdkVersion>
+  </PropertyGroup>
+
   <ItemGroup>
-    <!-- From nuget.org, as in any plugin: a ProjectReference to src/NockMon.Sdk would not import its build files. -->
-    <PackageReference Include="NockMon.Sdk" Version="1.0.0" PrivateAssets="all" />
+    <!-- From nuget.org, as in any plugin: a ProjectReference to src/NockMon.Sdk would not import its build files.
+         NockMon's release workflow builds it against the SDK it just packed (-p:NockMonSdkVersion, local source). -->
+    <PackageReference Include="NockMon.Sdk" Version="$(NockMonSdkVersion)" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

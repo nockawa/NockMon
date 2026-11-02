@@ -25,6 +25,28 @@ public class NativeSystemProbeTests
         Assert.Equal(184, (int)Marshal.OffsetOf<SystemProcessInformation>(nameof(SystemProcessInformation.PagefileUsage)));
         Assert.Equal(208, (int)Marshal.OffsetOf<SystemProcessInformation>(nameof(SystemProcessInformation.ReadOperationCount)));
         Assert.Equal(48, Unsafe.SizeOf<SystemProcessorPerformanceInformation>());
+        // The other structures the probe passes to Windows (sizes from the SDK and phnt headers, x64).
+        Assert.Equal(40, Unsafe.SizeOf<SystemPoolTag>());
+        Assert.Equal(176, Unsafe.SizeOf<SystemMemoryListInformation>());
+        Assert.Equal(80, Unsafe.SizeOf<ProcessMemoryCountersEx>());
+        Assert.Equal(104, Unsafe.SizeOf<PerformanceInformation>());
+        Assert.Equal(48, Unsafe.SizeOf<IoCounters>());
+        Assert.Equal(16, Marshal.SizeOf<AdvApi32.TokenPrivileges>());
+        Assert.Equal(16, Unsafe.SizeOf<UnicodeString>());
+    }
+
+    /// <summary>The plugin API version is written in three places: the SDK's package version, its props, and PluginApi.</summary>
+    [Fact]
+    public void SdkVersions_Agree()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var sdk = Path.Combine(root, "src", "NockMon.Sdk");
+        var package = System.Xml.Linq.XDocument.Load(Path.Combine(sdk, "NockMon.Sdk.csproj")).Descendants("Version").First().Value;
+        var props = System.Xml.Linq.XDocument.Load(Path.Combine(sdk, "build", "NockMon.Sdk.props")).Descendants("NockMonPluginApiVersion").First().Value;
+        var code = File.ReadAllText(Path.Combine(sdk, "WidgetPlugin.cs"));
+        var api = Version.Parse(package);
+        Assert.Equal($"{api.Major}.{api.Minor}", props);
+        Assert.Contains($"public static Version Version {{ get; }} = new({api.Major}, {api.Minor});", code);
     }
 
     [Fact]

@@ -27,8 +27,8 @@ internal sealed class LoadedPlugin
 
 /// <summary>
 /// Loads plugins (installed ones, development folders, <c>--plugin &lt;folder&gt;</c> arguments) into one load context
-/// each, registers their widgets, and installs from feeds. Assemblies the host has (the SDK, WinUI, the runtime…)
-/// always resolve to the host's copy: plugins share its types. Nothing can be unloaded: updates, removals and reloads
+/// each, registers their widgets, and installs from feeds. The runtime, the SDK, WinUI and Win2D always resolve to the
+/// host's copy (plugins share their types); other dependencies to the plugin's own. Nothing can be unloaded: updates, removals and reloads
 /// need a restart, which <see cref="RestartRequired"/> tracks. UI thread only.
 /// </summary>
 internal static class PluginRuntime
@@ -310,7 +310,23 @@ internal static class PluginRuntime
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Select(Path.GetFileNameWithoutExtension)
             .OfType<string>()
+            .Where(IsShared)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Assemblies whose types plugins share with the host: the runtime, the SDK, the Windows App SDK, CsWinRT, Win2D.
+        /// The host's private dependencies (NuGet, MCP, TraceEvent…) are not: a plugin shipping its own copy gets it
+        /// (the host's version may change in any release); one that does not still falls back to the host's.
+        /// </summary>
+        private static bool IsShared(string name) =>
+            name.StartsWith("System.", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Microsoft.Win32.", StringComparison.OrdinalIgnoreCase) ||
+            name is "System" or "mscorlib" or "netstandard" or "WindowsBase" or "Microsoft.CSharp" or "Microsoft.VisualBasic" or "Microsoft.VisualBasic.Core" ||
+            name.Equals("NockMon.Sdk", StringComparison.OrdinalIgnoreCase) || name.Equals("WinRT.Runtime", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("Microsoft.WinUI", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Microsoft.Windows.", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("Microsoft.WindowsAppRuntime", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("Microsoft.InteractiveExperiences", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("Microsoft.Web.WebView2", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("Microsoft.Graphics.Canvas", StringComparison.OrdinalIgnoreCase);
 
         private readonly AssemblyDependencyResolver _resolver = new(mainAssembly);
         private readonly string _directory = Path.GetDirectoryName(mainAssembly)!;

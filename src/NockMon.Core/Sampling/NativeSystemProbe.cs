@@ -29,6 +29,9 @@ public sealed unsafe class NativeSystemProbe : ISystemProbe
 
     public NativeSystemProbe()
     {
+        // The structure layouts (NativeMethods) are the 64-bit ones: x64 and ARM64 only.
+        if (!Environment.Is64BitProcess)
+            throw new PlatformNotSupportedException("NockMon's system probe needs a 64-bit process.");
         Processes.ProcessControl.EnableDebugPrivilege(); // Elevated: every process can be opened from the first sample.
         var groups = Kernel32.GetActiveProcessorGroupCount();
         _groupProcessorCounts = new ushort[groups];
