@@ -30,6 +30,18 @@
     </ItemGroup>
   </Target>
 
+  <!--
+    NockMon runs on Windows x64 and ARM64 only: runtime-specific assets for other platforms (Linux, macOS, Android, 32-bit
+    Windows) are neither copied nor packed. NockMonKeepAllRuntimes=true disables this.
+  -->
+  <Target Name="_NockMonWindowsRuntimesOnly" AfterTargets="ResolvePackageAssets" Condition="'$(NockMonKeepAllRuntimes)' != 'true'">
+    <ItemGroup>
+      <_McmForeignRuntime Include="@(RuntimeTargetsCopyLocalItems)"
+                          Condition="'%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' != 'win' and '%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' != 'win-x64' and '%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' != 'win-arm64'" />
+      <RuntimeTargetsCopyLocalItems Remove="@(_McmForeignRuntime)" />
+    </ItemGroup>
+  </Target>
+
   <!-- Writes a flat JSON object of string fields, escaped (a multi-line description or a quote must not break it). -->
   <UsingTask TaskName="_NockMonWriteJson" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>

@@ -68,6 +68,9 @@ Write widget plugins for **NockMon** (`dotnet tool install -g NockMon`). Full gu
 - The host provides this SDK, the Windows App SDK and the .NET runtime: they are not copied to the output nor packed.
   Other dependencies are, and resolve from the plugin's folder.
 - Exceptions thrown by a widget are contained: it shows the error and a Retry link.
+- **Metrics** (API 1.1): implement `IMetricPlugin` to publish values NockMon records in its history and offers to charts,
+  value widgets and AI agents. `Metrics` and `TryRead` run on NockMon's sampling thread at every sample: return cached
+  values, never block.
 - NockMon runs **elevated**: so does your plugin. Users are warned at install; be worthy of it.
 
 ## Versioning

@@ -20,6 +20,7 @@ internal sealed class LoadedPlugin
 
     public PluginManifest? Manifest { get; init; }
     public List<IWidgetPlugin> Widgets { get; } = [];
+    public List<IMetricPlugin> MetricSources { get; } = [];
 
     /// <summary>Why it failed to load (fully or partly); null when fine.</summary>
     public string? Error { get; set; }
@@ -37,6 +38,30 @@ internal static class PluginRuntime
 {
     private static readonly List<LoadedPlugin> _loaded = [];
     private static readonly Dictionary<(string Plugin, string Widget), IWidgetPlugin> _widgets = [];
+    private static readonly List<PluginMetricSource> _metricSources = [];
+
+    /// <summary>The loaded plugins' metric sources, started (API 1.1).</summary>
+    public static IReadOnlyList<Core.Metrics.IExternalMetricSource> MetricSources => _metricSources;
+
+    /// <summary>Raised (UI thread) when a plugin loaded during the session brought metric sources.</summary>
+    public static event Action? MetricSourcesChanged;
+
+    /// <summary>At exit, after the sampling engine stopped.</summary>
+    public static void DisposeMetricSources()
+    {
+        foreach (var source in _metricSources)
+        {
+            try
+            {
+                source.Plugin.Dispose();
+            }
+            catch (Exception e)
+            {
+                Debug.WriteLine($"Metric source {source.Source} failed to dispose: {e.Message}");
+            }
+        }
+        _metricSources.Clear();
+    }
 
     public static PluginStore Store { get; } = new(Path.Combine(AppPaths.Root, "Plugins"), PluginApi.Version);
 
@@ -278,22 +303,33 @@ internal static class PluginRuntime
             var context = new PluginLoadContext(Path.Combine(directory, manifest.Assembly), manifest.Id);
             var assembly = context.LoadFromAssemblyPath(Path.Combine(directory, manifest.Assembly));
             var errors = new List<string>();
+            var sources = 0;
             foreach (var type in ExportedTypes(assembly, errors))
             {
-                if (!type.IsClass || type.IsAbstract || !typeof(IWidgetPlugin).IsAssignableFrom(type))
+                if (!type.IsClass || type.IsAbstract)
                     continue;
                 try
                 {
-                    var widget = (IWidgetPlugin)Activator.CreateInstance(type)!;
-                    Register(plugin, widget);
+                    if (typeof(IWidgetPlugin).IsAssignableFrom(type))
+                        Register(plugin, (IWidgetPlugin)Activator.CreateInstance(type)!);
+                    else if (typeof(IMetricPlugin).IsAssignableFrom(type))
+                    {
+                        var source = (IMetricPlugin)Activator.CreateInstance(type)!;
+                        source.Start(new PluginContext(manifest.Id));
+                        plugin.MetricSources.Add(source);
+                        _metricSources.Add(new PluginMetricSource(manifest.Id, source));
+                        sources++;
+                    }
                 }
                 catch (Exception e)
                 {
                     errors.Add($"{type.Name}: {(e as TargetInvocationException)?.InnerException?.Message ?? e.Message}");
                 }
             }
-            if (plugin.Widgets.Count == 0 && errors.Count == 0)
-                errors.Add($"No public {nameof(IWidgetPlugin)} implementation in {manifest.Assembly}.");
+            if (plugin.Widgets.Count == 0 && plugin.MetricSources.Count == 0 && errors.Count == 0)
+                errors.Add($"No public {nameof(IWidgetPlugin)} or {nameof(IMetricPlugin)} implementation in {manifest.Assembly}.");
+            if (sources > 0)
+                MetricSourcesChanged?.Invoke();
             plugin.Error = errors.Count > 0 ? string.Join(" ", errors) : null;
         }
         catch (Exception e) when (e is IOException or BadImageFormatException or FileLoadException)

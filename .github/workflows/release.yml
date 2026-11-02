@@ -93,16 +93,18 @@ jobs:
           $architectures = if ($env:GITHUB_EVENT_NAME -eq 'pull_request') { @('x64') } else { @('x64', 'arm64') }
           tools/release/build.ps1 -Version $env:VERSION -Architectures $architectures
 
-      # A real plugin built against the SDK just packed: SDK changes are checked before they ship.
-      - name: Sample plugin against this SDK
+      # Real plugins built against the SDK just packed: SDK changes are checked before they ship.
+      - name: Plugins against this SDK
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           $sdk = ([xml](Get-Content src/NockMon.Sdk/NockMon.Sdk.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
-          dotnet build samples/ClaudeUsage.NockMon -c Release "-p:NockMonSdkVersion=$sdk" `
-            --source "artifacts/release/$env:VERSION/nuget" --source https://api.nuget.org/v3/index.json
-          if ($LASTEXITCODE -ne 0) { throw "The sample plugin does not build against NockMon.Sdk $sdk ($LASTEXITCODE)." }
+          $source = (Resolve-Path "artifacts/release/$env:VERSION/nuget").Path
+          foreach ($plugin in 'samples/ClaudeUsage.NockMon', 'samples/HardwareSensors.NockMon') {
+            dotnet build $plugin -c Release "-p:NockMonSdkVersion=$sdk" "-p:RestoreAdditionalProjectSources=$source"
+            if ($LASTEXITCODE -ne 0) { throw "$plugin does not build against NockMon.Sdk $sdk ($LASTEXITCODE)." }
+          }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

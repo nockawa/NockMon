@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using NockMon.Core.Folders;
 using NockMon.Core.History;
+using NockMon.Core.Metrics;
 
 namespace NockMon.Core.Sampling;
 
@@ -45,6 +46,11 @@ public sealed class SamplingEngine : IDisposable
     private HistoryStore _history;
     private SamplingOptions _options;
     private string[]? _pendingPatterns;
+    private IReadOnlyList<IExternalMetricSource>? _pendingSources;
+    private IReadOnlyList<IExternalMetricSource> _sources = [];
+    private readonly List<ExternalReading> _readings = [];
+    private readonly Dictionary<IExternalMetricSource, (IReadOnlyList<ExternalMetric> Metrics, double[] Values)> _sourceBuffers =
+        new(ReferenceEqualityComparer.Instance);
     private bool _rescanRequested; // Under _lock: Configure asks, the sampler (owner of _samplesUntilScan) applies.
     private Thread? _thread;
     private volatile bool _stopping;
@@ -127,6 +133,13 @@ public sealed class SamplingEngine : IDisposable
         _wake.Set();
     }
 
+    /// <summary>External metric sources (plugins) read at every sample (applied at the next sample).</summary>
+    public void SetExternalSources(IReadOnlyList<IExternalMetricSource> sources)
+    {
+        lock (_lock)
+            _pendingSources = sources;
+    }
+
     /// <summary>Name patterns to sample at the fast rate (applied at the next sample, effective from the next scan).</summary>
     public void SetWatchedPatterns(IEnumerable<string> patterns)
     {
@@ -169,6 +182,12 @@ public sealed class SamplingEngine : IDisposable
                 _pendingPatterns = null;
                 rescan = _rescanRequested;
                 _rescanRequested = false;
+                if (_pendingSources is { } sources)
+                {
+                    _sources = sources;
+                    _sourceBuffers.Clear();
+                    _pendingSources = null;
+                }
             }
             if (patterns is not null)
                 _watched.SetPatterns(patterns);
@@ -214,6 +233,7 @@ public sealed class SamplingEngine : IDisposable
                 return false;
             SampleProcessor.ApplyEvents(_back, in events);
             _gpu?.Collect(_back.Gpus);
+            ReadExternalSources();
 
             lock (_lock)
             {
@@ -233,7 +253,7 @@ public sealed class SamplingEngine : IDisposable
                     _history = new HistoryStore(_history.Capacity, _history.ScanCapacity, _back.Cores.Length);
                 (_front, _back) = (_back, _front);
                 _front.SampleIndex = _history.TotalSamples;
-                _history.AppendSample(_front, _watched.Aggregates, _folders.Readings);
+                _history.AppendSample(_front, _watched.Aggregates, _folders.Readings, _readings);
                 if (scanned)
                 {
                     _currentTable.ScanIndex = _history.TotalScans;
@@ -244,6 +264,33 @@ public sealed class SamplingEngine : IDisposable
         }
         Sampled?.Invoke();
         return true;
+    }
+
+    /// <summary>
+    /// Reads each external source into its buffer. The source is plugin code: an exception (or a stale list) skips it
+    /// for this sample, nothing else. A new metric list is registered in the catalog (names and units for the UI).
+    /// </summary>
+    private void ReadExternalSources()
+    {
+        _readings.Clear();
+        foreach (var source in _sources)
+        {
+            try
+            {
+                var metrics = source.Metrics;
+                if (!_sourceBuffers.TryGetValue(source, out var buffer) || !ReferenceEquals(buffer.Metrics, metrics))
+                {
+                    _sourceBuffers[source] = buffer = (metrics, new double[metrics.Count]);
+                    ExternalMetricCatalog.Register(source, metrics);
+                }
+                var valid = source.TryRead(metrics, buffer.Values);
+                _readings.Add(new ExternalReading(source, metrics, buffer.Values, valid));
+            }
+            catch (Exception e)
+            {
+                Debug.WriteLine($"Metric source {source.Plugin}/{source.Source} failed: {e.Message}");
+            }
+        }
     }
 
     /// <summary>

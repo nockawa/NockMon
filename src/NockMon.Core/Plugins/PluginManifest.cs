@@ -63,3 +63,14 @@ public sealed record PluginManifest(
     /// </summary>
     public static bool IsCompatible(Version plugin, Version host) => plugin.Major == host.Major && plugin.Minor <= host.Minor;
 }
+
+/// <summary>Plugins made with NockMon, offered by the app when not installed.</summary>
+public static class FirstPartyPlugins
+{
+    /// <summary>CPU, motherboard, GPU and memory sensors (LibreHardwareMonitor; CPU and motherboard need the PawnIO driver).</summary>
+    public const string HardwareSensors = "NockMon.HardwareSensors";
+
+    public const string HardwareSensorsPitch =
+        "Temperatures, fans, voltages and power of the CPU, motherboard, GPUs and memory, by the NockMon author. " +
+        "CPU and motherboard sensors need the PawnIO driver (winget install namazso.PawnIO).";
+}

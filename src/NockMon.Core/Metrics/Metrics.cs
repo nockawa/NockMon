@@ -17,6 +17,8 @@ public enum MetricUnit
     Celsius,
     Watts,
     Rpm,
+    Volts,
+    Amperes,
 }
 
 /// <summary>How CPU values are displayed. Stored values are always in logical CPUs used.</summary>

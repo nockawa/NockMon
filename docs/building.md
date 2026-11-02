@@ -68,9 +68,10 @@ One-time setup:
 | Where | What |
 |---|---|
 | nuget.org, your name → **Trusted Publishing** | A policy: repository owner `nockawa`, repository `NockMon`, workflow file `release.yml`, environment `release`. |
-| nuget.org, same page | A second policy for the sample plugin: workflow file `claude-usage-plugin.yml`, environment `release`. |
-| GitHub, **Settings → Environments** | Environment `release`, with yourself as required reviewer and deployments limited to tags `v*` and `claude-usage-v*`. |
-| GitHub, **Settings → Rules → Rulesets** | A tag ruleset on `v*` and `claude-usage-v*` restricting updates and deletions: a published tag cannot be moved. |
+| nuget.org, same page | One policy per plugin workflow: `claude-usage-plugin.yml` and `hardware-sensors-plugin.yml`, environment `release`. |
+| nuget.org, **ID prefix reservation** | Reserve the `NockMon.` prefix: first-party packages (`NockMon.HardwareSensors`) then show as verified. |
+| GitHub, **Settings → Environments** | Environment `release`, with yourself as required reviewer and deployments limited to tags `v*`, `claude-usage-v*` and `hardware-sensors-v*`. |
+| GitHub, **Settings → Rules → Rulesets** | A tag ruleset on `v*`, `claude-usage-v*` and `hardware-sensors-v*` restricting updates and deletions: a published tag cannot be moved. |
 | GitHub, environment `release` → secrets | `WINGET_TOKEN`: a classic personal access token with the `public_repo` scope (wingetcreate forks winget-pkgs and opens the pull request with it). |
 
 To build locally, the same script the workflow runs:
@@ -113,7 +114,7 @@ release. Its major.minor is the plugin API version (`PluginApi.Version` and `Noc
 | `src/NockMon.Launcher` | The `nockmon` dotnet tool: starts the installed app, and relays MCP over stdio (the app relays too, for installs without the tool: `NockMon.exe mcp`). |
 | `tests/NockMon.Core.Tests` | Unit and integration tests of the core. |
 | `samples` | Example plugins (public domain, not in the solution): `ClaudeUsage.NockMon`, published on nuget.org by its own workflow. |
-| `.github/workflows` | The release workflow (tags `v*` publish, pull requests build and test) and the sample plugin's (tags `claude-usage-v*`). |
+| `.github/workflows` | The release workflow (tags `v*` publish, pull requests build and test) and the plugins' (tags `claude-usage-v*`, `hardware-sensors-v*`; the Hardware sensors plugin needs `NockMon.Sdk` 1.1 on nuget.org, published with NockMon 1.2). |
 | `installer` | The Inno Setup script. |
 | `tools/release` | The release build script. |
 | `tools/icon` | The application icon generator. |

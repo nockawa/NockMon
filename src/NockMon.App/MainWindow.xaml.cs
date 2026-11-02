@@ -67,6 +67,8 @@ public sealed partial class MainWindow : Window
         };
         if (Core.Persistence.AppPaths.StartupWarning is { } warning)
             ShowInfo(InfoBarSeverity.Warning, "Data folder", warning);
+        else
+            SuggestSensors();
         SingleInstance.Listen(_hwnd, ShowFromTray, Exit, () =>
         {
             SavePlacement(); // Windows ends the process without closing the window.
@@ -739,14 +741,16 @@ public sealed partial class MainWindow : Window
 
     private bool _pluginsOpen;
 
-    private async void OpenPlugins(int tab)
+    private async void OpenPlugins(int tab) => await OpenPluginsAsync(tab, null);
+
+    private async Task OpenPluginsAsync(int tab, string? search)
     {
         if (_pluginsOpen)
             return;
         _pluginsOpen = true;
         try
         {
-            if (await Plugins.PluginsDialog.ShowAsync(Content.XamlRoot, _session, Restart, tab))
+            if (await Plugins.PluginsDialog.ShowAsync(Content.XamlRoot, _session, Restart, tab, search))
                 Board.Rebuild(); // Placeholders of newly loaded plugins become widgets.
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
@@ -910,8 +914,27 @@ public sealed partial class MainWindow : Window
     internal void ReportPluginFault(string plugin, Exception exception) =>
         ShowInfo(InfoBarSeverity.Error, $"Plugin {plugin}", $"{exception.GetType().Name}: {exception.Message} (details in crash.log)");
 
+    /// <summary>Once: the first-party sensors plugin, if not installed (temperatures are what many expect of a monitor).</summary>
+    private void SuggestSensors()
+    {
+        var id = Core.Plugins.FirstPartyPlugins.HardwareSensors;
+        if (_session.Settings.SensorsSuggested || Plugins.PluginRuntime.FindLoaded(id) is not null || Plugins.PluginRuntime.Store.Find(id) is not null)
+            return;
+        _session.Settings.SensorsSuggested = true;
+        _session.SaveSettings();
+        var show = new Button { Content = "Plugins…" };
+        show.Click += (_, _) =>
+        {
+            Info.IsOpen = false;
+            _ = OpenPluginsAsync(0, id);
+        };
+        ShowInfo(InfoBarSeverity.Informational, "Hardware sensors", Core.Plugins.FirstPartyPlugins.HardwareSensorsPitch + " Install it from the Plugins dialog.");
+        Info.ActionButton = show;
+    }
+
     private void ShowInfo(InfoBarSeverity severity, string title, string message)
     {
+        Info.ActionButton = null; // Only the message that set one keeps it.
         Info.Severity = severity;
         Info.Title = title;
         Info.Message = message;

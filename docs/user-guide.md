@@ -104,6 +104,7 @@ Charts, values and value lists show *series*. A series is a metric of a source:
 | **Logical CPU** | one logical processor, by index | usage, kernel time, frequency of CPU 5 |
 | **Processes** | every process whose image name matches a pattern, summed | CPU of `chrome`, working set of `devenv;msbuild` |
 | **Kernel object** | an object type | `Token` objects, `File` handles |
+| **Sensors and plugins** | a group, then a metric | Drive temperatures (built in), and the metrics of plugins such as [Hardware sensors](../samples/HardwareSensors.NockMon): CPU and motherboard temperatures, fans, voltages |
 | **GPU** | an adapter | utilization, an engine (`Compute*`), dedicated memory, temperature |
 
 All series of a chart must share a unit (you can't mix bytes and percents). A chart can be **stacked**, for parts of a

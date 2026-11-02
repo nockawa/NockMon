@@ -105,7 +105,8 @@ public sealed class HistoryStore
     /// Appends a fast sample: system, cores, the watched-pattern aggregates of this tick, and the latest counts of the
     /// watched folders (held from scan to scan; a folder no longer listed loses its history).
     /// </summary>
-    public void AppendSample(Snapshot snapshot, IReadOnlyList<WatchedAggregate> watched, IReadOnlyList<Folders.FolderReading>? folders = null)
+    public void AppendSample(Snapshot snapshot, IReadOnlyList<WatchedAggregate> watched, IReadOnlyList<Folders.FolderReading>? folders = null,
+        IReadOnlyList<ExternalReading>? external = null)
     {
         if (snapshot.Cores.Length != CoreCount)
             throw new ArgumentException($"Snapshot has {snapshot.Cores.Length} cores, history expects {CoreCount}.", nameof(snapshot));
@@ -150,8 +151,101 @@ public sealed class HistoryStore
         }
 
         AppendFolders(slot, folders ?? []);
+        AppendExternal(slot, external ?? []);
 
         TotalSamples++;
+    }
+
+    // --- External metrics (plugins) --------------------------------------------------------------------------------
+
+    private sealed class ExternalRing(int capacity, long firstSample)
+    {
+        public readonly float[] Values = new float[capacity];
+
+        /// <summary>Sample index of the first value (the source's first non-NaN value).</summary>
+        public readonly long FirstSample = firstSample;
+
+        public long LastWritten = firstSample;
+    }
+
+    private readonly Dictionary<(string, string), Dictionary<string, ExternalRing>> _external = new(SourceKeyComparer.Instance);
+
+    /// <summary>Per source, the ring of each metric of its current list (null until the metric gives a value): no lookups per sample.</summary>
+    private readonly Dictionary<IExternalMetricSource, (IReadOnlyList<ExternalMetric> Metrics, ExternalRing?[] Rings)> _externalMaps =
+        new(ReferenceEqualityComparer.Instance);
+
+    private readonly List<(Dictionary<string, ExternalRing> Rings, string Id)> _externalEvicted = [];
+
+    /// <summary>
+    /// One value per metric and sample. A metric starts at its first value (a partial history, like a folder's); then a
+    /// missing value (NaN, a source failing or gone) holds the previous one, and a metric missing for the whole retention
+    /// is dropped.
+    /// </summary>
+    private void AppendExternal(int slot, IReadOnlyList<ExternalReading> readings)
+    {
+        for (var r = 0; r < readings.Count; r++)
+        {
+            var reading = readings[r];
+            var key = (reading.Source.Plugin, reading.Source.Source);
+            if (!_external.TryGetValue(key, out var rings))
+                _external[key] = rings = new Dictionary<string, ExternalRing>(StringComparer.Ordinal);
+            if (!_externalMaps.TryGetValue(reading.Source, out var map) || !ReferenceEquals(map.Metrics, reading.Metrics))
+            {
+                map = (reading.Metrics, new ExternalRing?[reading.Metrics.Count]);
+                for (var i = 0; i < map.Rings.Length; i++)
+                    map.Rings[i] = rings.GetValueOrDefault(reading.Metrics[i].Id);
+                _externalMaps[reading.Source] = map;
+            }
+            if (!reading.Valid)
+                continue;
+            for (var i = 0; i < map.Rings.Length && i < reading.Values.Length; i++)
+            {
+                var value = reading.Values[i];
+                if (double.IsNaN(value))
+                    continue; // Held below.
+                var ring = map.Rings[i];
+                if (ring is null)
+                {
+                    map.Rings[i] = ring = new ExternalRing(Capacity, TotalSamples);
+                    rings[reading.Metrics[i].Id] = ring;
+                }
+                ring.Values[slot] = (float)value;
+                ring.LastWritten = TotalSamples;
+            }
+        }
+
+        // Every ring gets this sample's slot: the previous value when nothing came (the slot holds a value from a
+        // retention ago otherwise).
+        var previous = (slot + Capacity - 1) % Capacity;
+        foreach (var rings in _external.Values)
+        {
+            foreach (var (id, ring) in rings)
+            {
+                if (ring.LastWritten == TotalSamples)
+                    continue;
+                if (TotalSamples - ring.LastWritten > Capacity)
+                    _externalEvicted.Add((rings, id));
+                else
+                    ring.Values[slot] = ring.Values[previous];
+            }
+        }
+        if (_externalEvicted.Count > 0)
+        {
+            foreach (var (rings, id) in _externalEvicted)
+                rings.Remove(id);
+            _externalEvicted.Clear();
+            _externalMaps.Clear(); // Rebuilt at the next reading, without the dropped rings.
+        }
+    }
+
+    /// <summary>Samples since the metric's first value only (like a folder).</summary>
+    private int ReadExternal(PluginSeries series, Span<float> destination)
+    {
+        if (!_external.TryGetValue((series.Plugin, series.Source), out var rings) || !rings.TryGetValue(series.Metric, out var ring))
+            return 0;
+        var n = (int)Math.Min(destination.Length, TotalSamples - ring.FirstSample);
+        CopyLatest(ring.Values, TotalSamples, Capacity, destination[..n]);
+        return n;
     }
 
     private sealed class FolderRings(int capacity, long firstSample)
@@ -300,6 +394,8 @@ public sealed class HistoryStore
     {
         if (series is FolderSeries folder)
             return ReadFolder(folder, destination[..Math.Min(destination.Length, Count)]);
+        if (series is PluginSeries plugin)
+            return ReadExternal(plugin, destination[..Math.Min(destination.Length, Count)]);
         var n = Math.Min(destination.Length, Count);
         var dst = destination[..n];
         switch (series)

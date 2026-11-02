@@ -53,6 +53,9 @@ public sealed class AppSettings
     /// <summary>Agents may change layouts, through an edit session the user reviews (Done/Cancel). Off by default.</summary>
     public bool AgentLayoutChanges { get; set; }
 
+    /// <summary>The Hardware sensors plugin was suggested once (main window): not again.</summary>
+    public bool SensorsSuggested { get; set; }
+
     /// <summary>Main window placement in normal mode (at last close or when entering compact mode); null = default size.</summary>
     public WindowPlacementSettings? Window { get; set; }
 

@@ -29,6 +29,8 @@ public static class MetricFormatter
             MetricUnit.Celsius => With(value, "0", " °C"),
             MetricUnit.Watts => With(value, value < 100 ? "0.0" : "0", " W"),
             MetricUnit.Rpm => With(value, "#,0", " rpm"),
+            MetricUnit.Volts => With(value, Math.Abs(value) < 10 ? "0.000" : "0.0", " V"),
+            MetricUnit.Amperes => With(value, Math.Abs(value) < 10 ? "0.00" : "0.0", " A"),
             _ => value.ToString(CultureInfo.CurrentCulture),
         };
     }

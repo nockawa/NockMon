@@ -12,7 +12,8 @@ public sealed record MetricEntry(string Id, string Name, string Unit, string? Ta
 
 /// <summary>
 /// Agent-facing metric ids: "system.Cpu", "core.Usage", "process.WorkingSet", "gpu.Temperature", "objectType.Handles", "folder.Size",
-/// plus current-value-only scopes "driver.*" and "poolTag.*" (kernel tables). Case-insensitive.
+/// plugins' metrics "plugin.&lt;plugin&gt;/&lt;source&gt;/&lt;metric id&gt;", plus current-value-only scopes "driver.*" and "poolTag.*"
+/// (kernel tables). Case-insensitive, except a plugin's metric id.
 /// </summary>
 public static class MetricIds
 {
@@ -38,6 +39,12 @@ public static class MetricIds
                 ObjectTypeTarget, Docs.Of(m));
         foreach (var m in Enum.GetValues<FolderMetric>())
             yield return Entry($"folder.{m}", Folders.FolderScope.Info(m), FolderTarget, Docs.Of(m));
+        foreach (var source in ExternalMetricCatalog.Sources)
+        {
+            foreach (var m in source.Metrics)
+                yield return new MetricEntry(PluginId(source.Plugin, source.Source, m.Id), $"{m.Name} ({m.Group})", AgentUnits.Label(m.Unit), null, true,
+                    $"From the {source.DisplayName} plugin.");
+        }
         foreach (var f in Enum.GetValues<DriverField>().Where(f => f != DriverField.Name))
             yield return new MetricEntry($"driver.{f}", Docs.Of(f).Title, f.ToString().EndsWith("Rate", StringComparison.Ordinal) ? "/s" : "ms",
                 null, false, Docs.Of(f).Summary);
@@ -46,12 +53,34 @@ public static class MetricIds
                 : f.ToString().EndsWith("Growth", StringComparison.Ordinal) ? "KB/s" : "MB", null, false, Docs.Of(f).Summary);
     }
 
+    public static string PluginId(string plugin, string source, string metric) => $"plugin.{plugin}/{source}/{metric}";
+
+    /// <summary>"plugin.&lt;plugin&gt;/&lt;source&gt;/&lt;metric&gt;": the metric id may hold slashes itself.</summary>
+    private static PluginSeries ParsePlugin(string id)
+    {
+        var rest = id["plugin.".Length..];
+        var first = rest.IndexOf('/');
+        var second = first < 0 ? -1 : rest.IndexOf('/', first + 1);
+        if (first <= 0 || second <= first + 1 || second == rest.Length - 1)
+            throw Unknown(id);
+        var series = new PluginSeries(rest[..first], rest[(first + 1)..second], rest[(second + 1)..]);
+        if (ExternalMetricCatalog.Find(series.Plugin, series.Source, series.Metric) is null)
+            throw new AgentException($"Unknown plugin metric '{id}' (is the plugin loaded?). list_metrics lists them.");
+        return series;
+    }
+
     private static MetricEntry Entry(string id, MetricInfo info, string? target, Doc doc) =>
         new(id, info.DisplayName, AgentUnits.Label(info.Unit), target, info.HasHistory, doc.Summary);
 
     /// <summary>Full documentation of a metric id (title, summary, details in light markdown).</summary>
     public static Doc Describe(string id)
     {
+        if (id.StartsWith("plugin.", StringComparison.OrdinalIgnoreCase))
+        {
+            var plugin = ParsePlugin(id);
+            var metric = ExternalMetricCatalog.Find(plugin.Plugin, plugin.Source, plugin.Metric)!;
+            return new Doc(metric.Name, $"{metric.Group}, from the {plugin.Plugin} plugin ({AgentUnits.Label(metric.Unit)}).", "");
+        }
         var (scope, name) = Split(id);
         return scope switch
         {
@@ -73,6 +102,8 @@ public static class MetricIds
     public static SeriesRef ToSeries(string id, string? target, IReadOnlyList<string> gpuAdapters, int logicalProcessors,
         IReadOnlyList<Folders.FolderScope>? folders = null)
     {
+        if (id.StartsWith("plugin.", StringComparison.OrdinalIgnoreCase))
+            return ParsePlugin(id);
         var (scope, name) = Split(id);
         switch (scope)
         {

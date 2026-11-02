@@ -10,6 +10,7 @@ namespace NockMon.Core.Metrics;
 [JsonDerivedType(typeof(ObjectTypeSeries), "objectType")]
 [JsonDerivedType(typeof(GpuSeries), "gpu")]
 [JsonDerivedType(typeof(FolderSeries), "folder")]
+[JsonDerivedType(typeof(PluginSeries), "plugin")]
 public abstract record SeriesRef
 {
     public abstract MetricInfo Info { get; }
@@ -89,6 +90,21 @@ public sealed record FolderSeries(FolderMetric Metric, string Path, bool Recursi
 
     public override MetricInfo Info => Folders.FolderScope.Info(Metric);
     public override string DefaultLabel => $"{Scope.Name} {Info.ShortName.ToLowerInvariant()}";
+}
+
+/// <summary>
+/// A metric of a plugin's metric source (SDK <c>IMetricPlugin</c>), by ids: a layout keeps it while the plugin is
+/// missing, and it works again once the plugin is back. Recorded from the first sample the source gave a value.
+/// </summary>
+public sealed record PluginSeries(string Plugin, string Source, string Metric) : SeriesRef
+{
+    public override MetricInfo Info => ExternalMetricCatalog.Find(Plugin, Source, Metric) is { } m
+        ? new MetricInfo(m.Name, m.ShortName, m.Unit, true)
+        : new MetricInfo($"{Metric} (plugin {Plugin} not loaded)", Metric, MetricUnit.Count, true);
+
+    public override MetricUnit Unit => ExternalMetricCatalog.Find(Plugin, Source, Metric)?.Unit ?? MetricUnit.Count;
+
+    public override string DefaultLabel => ExternalMetricCatalog.Find(Plugin, Source, Metric)?.Name ?? Metric;
 }
 
 /// <summary>Sum of <paramref name="Field"/> over all processes whose image name matches <paramref name="Pattern"/> (see <see cref="Model.NamePattern"/>).</summary>

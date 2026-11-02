@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    NockMon plugin: the machine's hardware sensors (temperatures, fans, voltages, power) through LibreHardwareMonitorLib,
+    as NockMon metrics (charts, value widgets, history, AI agents) and a sensors table widget. Read-only: no fan control.
+    CPU and motherboard sensors need the PawnIO driver (winget install namazso.PawnIO). Build, then load the output
+    folder in NockMon (Plugins › Development, or nockmon - -plugin <output folder>).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- First-party: under the NockMon name (the plugin id, stored in layouts). -->
+    <PackageId>NockMon.HardwareSensors</PackageId>
+    <Version>0.2.0</Version>
+    <Title>Hardware sensors</Title>
+    <Authors>nockawa</Authors>
+    <Description>NockMon plugin: CPU, motherboard, GPU and memory sensors (temperatures, fan speeds and duty, voltages, power) as NockMon metrics, through LibreHardwareMonitor. CPU and motherboard sensors need the PawnIO driver.</Description>
+    <PackageTags>nockmon;nockmon-plugin;sensors;temperature;fan;hardware;librehardwaremonitor</PackageTags>
+    <PackageProjectUrl>https://github.com/nockawa/NockMon/tree/main/samples/HardwareSensors.NockMon</PackageProjectUrl>
+    <PackageIcon>icon.png</PackageIcon>
+    <RepositoryUrl>https://github.com/nockawa/NockMon.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Metric sources need the plugin API 1.1. -->
+    <NockMonSdkVersion Condition="'$(NockMonSdkVersion)' == ''">1.1.0</NockMonSdkVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- From nuget.org, as in any plugin: a ProjectReference to src/NockMon.Sdk would not import its build files.
+         Until NockMon.Sdk 1.1.0 is published, build against a local pack: -p:NockMonSdkVersion=1.1.0 - -source <folder>. -->
+    <PackageReference Include="NockMon.Sdk" Version="$(NockMonSdkVersion)" PrivateAssets="all" />
+    <!-- MPL-2.0. Shipped in the plugin package with its dependencies. -->
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\docs\images\icon.png" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+</Project>

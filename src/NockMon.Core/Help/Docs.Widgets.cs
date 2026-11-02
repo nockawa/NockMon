@@ -152,8 +152,17 @@ public static partial class Docs
         ObjectTypeSeries s => Of(s.Metric),
         GpuSeries s => Of(s.Metric),
         FolderSeries s => Of(s.Metric),
+        PluginSeries s => Of(s),
         _ => throw new ArgumentException($"Unknown series {series.GetType().Name}.", nameof(series)),
     };
+
+    /// <summary>A plugin's metric: what the plugin says of it (its name and group), or that the plugin is missing.</summary>
+    public static Doc Of(PluginSeries series) => ExternalMetricCatalog.Find(series.Plugin, series.Source, series.Metric) is { } m
+        ? D(m.Name, $"{m.Group}: {m.ShortName}, from the plugin {series.Plugin}.",
+            $"A metric published by the plugin `{series.Plugin}` (source `{series.Source}`, id `{series.Metric}`). NockMon records it at every " +
+            "sample from the plugin's first value, like its own metrics.")
+        : D(series.Metric, $"Plugin '{series.Plugin}' is not loaded: no values.",
+            $"This series comes from the plugin `{series.Plugin}`. Install it from the **Plugins** dialog (toolbar); the series is kept meanwhile.");
 
     private const string FolderNote =
         "Scanned in the background while a layout uses the folder: at its widget's interval, every 60 s for a chart or value series, " +

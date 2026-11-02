@@ -215,6 +215,11 @@ values only.
 - **objectType**: a kernel object type (chart target: its name, e.g. `Token`).
 - **folder**: a folder watched by a Folder size widget or a folder series (target: its path). Recorded from the folder's
   first scan, only while a layout uses it.
+- **plugin**: external metrics, recorded from their first value: NockMon's own **drive temperatures** (NVMe and most
+  SATA drives, read through the storage driver every 10 s; ids `plugin.NockMon/drives/<serial>/temperature/<sensor>`), and
+  the metrics plugins publish (plugin API 1.1), for example [Hardware sensors](../samples/HardwareSensors.NockMon)
+  (CPU, motherboard, GPU and memory temperatures, fans, voltages, power). Ids `plugin.<plugin>/<source>/<metric id>`;
+  `list_metrics` lists them.
 - **driver**, **poolTag**: columns of the Drivers and Kernel pool tags widgets.
 
 ### system

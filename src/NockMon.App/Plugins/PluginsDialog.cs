@@ -80,10 +80,12 @@ internal sealed class PluginsDialog
     }
 
     /// <summary>Shows the dialog on <paramref name="tab"/> (0 browse, 1 installed, 2 development).</summary>
+    /// <param name="search">Initial search of the Browse tab.</param>
     /// <returns>true if plugins were loaded: the board should be rebuilt (placeholders become widgets).</returns>
-    public static async Task<bool> ShowAsync(XamlRoot root, LayoutSession session, Action restart, int tab = 0)
+    public static async Task<bool> ShowAsync(XamlRoot root, LayoutSession session, Action restart, int tab = 0, string? search = null)
     {
         var dialog = new PluginsDialog(root, session, restart);
+        dialog._search.Text = search ?? "";
         dialog._tabs.SelectedItem = dialog._tabs.Items[tab];
         dialog.UpdateRestartBar();
         await dialog._dialog.ShowAsync();
@@ -118,6 +120,8 @@ internal sealed class PluginsDialog
 
         var page = new StackPanel { Spacing = 10, Padding = new Thickness(0, 0, 16, 0) };
         page.Children.Add(bar);
+        if (Recommendation() is { } recommendation)
+            page.Children.Add(recommendation);
         page.Children.Add(SourcesEditor());
         page.Children.Add(_browseStatus);
         page.Children.Add(_results);
@@ -447,7 +451,7 @@ internal sealed class PluginsDialog
             : loaded.Error is { } error ? ($"Failed to load: {error}", true)
             : loaded.Manifest?.Version is { } running && !string.Equals(Normalize(running), Normalize(plugin.Version), StringComparison.OrdinalIgnoreCase)
                 ? ($"Running {running}; {plugin.Version} starts at the next start.", false)
-            : ($"Loaded · widgets: {string.Join(", ", loaded.Widgets.Select(w => w.DisplayName))}", false);
+            : ($"Loaded · {Contents(loaded)}", false);
         var line = Secondary(text);
         if (critical)
             line.Foreground = Brush("SystemFillColorCriticalBrush");
@@ -507,7 +511,7 @@ internal sealed class PluginsDialog
             text.Children.Add(new TextBlock { Text = folder, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
             var status = loaded is null ? Secondary("Loads at the next start.")
                 : loaded.Error is { } failure ? Secondary($"{loaded.Title}: {failure}")
-                : Secondary($"{loaded.Title} {loaded.Manifest?.Version} · widgets: {string.Join(", ", loaded.Widgets.Select(w => w.DisplayName))}" + (commandLine ? "  ·  from the command line" : ""));
+                : Secondary($"{loaded.Title} {loaded.Manifest?.Version} · {Contents(loaded)}" + (commandLine ? "  ·  from the command line" : ""));
             if (loaded?.Error is not null)
                 status.Foreground = Brush("SystemFillColorCriticalBrush");
             text.Children.Add(status);
@@ -581,7 +585,40 @@ internal sealed class PluginsDialog
         return new ScrollViewer { Content = page };
     }
 
+    /// <summary>The first-party sensors plugin, while it is neither installed nor loaded: Show searches for it.</summary>
+    private InfoBar? Recommendation()
+    {
+        var id = FirstPartyPlugins.HardwareSensors;
+        if (PluginRuntime.FindLoaded(id) is not null || PluginRuntime.Store.Find(id) is { PendingRemoval: false })
+            return null;
+        var show = new Button { Content = "Show" };
+        show.Click += (_, _) =>
+        {
+            _search.Text = id;
+            _ = SearchAsync();
+        };
+        return new InfoBar
+        {
+            Title = "Hardware sensors",
+            Message = FirstPartyPlugins.HardwareSensorsPitch,
+            Severity = InfoBarSeverity.Informational,
+            IsOpen = true,
+            ActionButton = show,
+        };
+    }
+
     // ---- Building blocks --------------------------------------------------------------------------------------
+
+    /// <summary>"widgets: A, B · metrics: Sensors".</summary>
+    private static string Contents(LoadedPlugin plugin)
+    {
+        var parts = new List<string>();
+        if (plugin.Widgets.Count > 0)
+            parts.Add($"widgets: {string.Join(", ", plugin.Widgets.Select(w => w.DisplayName))}");
+        if (plugin.MetricSources.Count > 0)
+            parts.Add($"metrics: {string.Join(", ", plugin.MetricSources.Select(m => m.DisplayName))}");
+        return string.Join(" · ", parts);
+    }
 
     private static PluginManifest? TryManifest(string directory)
     {

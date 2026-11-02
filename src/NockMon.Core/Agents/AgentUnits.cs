@@ -26,6 +26,8 @@ public static class AgentUnits
         MetricUnit.Celsius => "°C",
         MetricUnit.Watts => "W",
         MetricUnit.Rpm => "rpm",
+        MetricUnit.Volts => "V",
+        MetricUnit.Amperes => "A",
         MetricUnit.Timestamp => "time",
         _ => "",
     };
