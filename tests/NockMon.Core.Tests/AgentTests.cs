@@ -236,7 +236,7 @@ public sealed class AgentTests : IDisposable
                 cancellationToken: TestContext.Current.CancellationToken);
             var overview = await client.CallToolAsync("get_overview", cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotEqual(true, overview.IsError);
-            Assert.Equal(["test-agent"], server.Clients);
+            Assert.Equal(["AI agent 'test-agent'"], server.Clients); // Marked as the agent's own words.
 
             // A second server on the same name (an impersonator, or a second instance) must not start.
             using var squatter = new AgentPipeServer(() => new MonitorTools(Queries).CreateServerOptions("1.0"), name);

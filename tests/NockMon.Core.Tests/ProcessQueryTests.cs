@@ -48,6 +48,13 @@ public class ProcessQueryTests
         Assert.Equal(20, chrome.Stats.Handles);
         Assert.Equal(101, chrome.Stats.CreateTime);
         Assert.Equal(2, chrome.GetValue(ProcessField.Instances));
+
+        // Identity from the earliest instance, PID and start time together, even listed after a later one.
+        var reversed = Snap((7, "a.exe", 0, 1), (5, "a.exe", 0, 1));
+        reversed.Processes[0].CreateTime = 300;
+        reversed.Processes[1].CreateTime = 200;
+        var a = new ProcessQuery().Run(reversed, new ProcessQueryOptions(ProcessField.Cpu, true, 10, GroupByName: true)).ToArray()[0];
+        Assert.Equal((5, 200L), (a.Stats.Pid, a.Stats.CreateTime));
     }
 
     [Fact]

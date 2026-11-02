@@ -30,6 +30,18 @@ public sealed partial class AgentPipeServer : IDisposable
     private CancellationTokenSource? _stop;
     private Task? _loop;
     private int _instances; // Our pipe instances alive (listening or serving): none means the name is free.
+    private const int MaxSessions = 16;
+
+    private int ConnectedCount
+    {
+        get
+        {
+            lock (_lock)
+                return _connected.Count;
+        }
+    }
+
+    private sealed class PipeSquattedException(string message) : IOException(message);
 
     /// <param name="options">Options of a new session (a fresh tool collection each time).</param>
     /// <param name="pipeName">Pipe name (tests); <see cref="DefaultPipeName"/> by default.</param>
@@ -56,8 +68,23 @@ public sealed partial class AgentPipeServer : IDisposable
         get
         {
             lock (_lock)
-                return _sessions.Select(s => s.ClientInfo?.Title ?? s.ClientInfo?.Name ?? "agent").ToList();
+                return _sessions.Select(DisplayName).ToList();
         }
+    }
+
+    /// <summary>
+    /// The name a client gave, as shown by NockMon ("AI agent 'claude-code'"): the client chooses it, so it is marked as an
+    /// agent's, stripped of control characters and cut, never taken for the app's own words in a dialog.
+    /// </summary>
+    public static string DisplayName(McpServer server)
+    {
+        var name = server.ClientInfo?.Title ?? server.ClientInfo?.Name;
+        if (string.IsNullOrWhiteSpace(name))
+            return "An AI agent";
+        name = new string(name.Where(c => !char.IsControl(c)).ToArray()).Trim();
+        if (name.Length > 40)
+            name = name[..40] + "…";
+        return name.Length == 0 ? "An AI agent" : $"AI agent '{name}'";
     }
 
     public void Start()
@@ -101,14 +128,40 @@ public sealed partial class AgentPipeServer : IDisposable
             NamedPipeServerStream pipe;
             try
             {
+                // Bounded: clients cannot pile up sessions (and pipe instances) in the elevated process.
+                while (ConnectedCount >= MaxSessions)
+                    await Task.Delay(500, cancel).ConfigureAwait(false);
                 pipe = CreatePipe(_pipeName, first: Volatile.Read(ref _instances) == 0);
                 Interlocked.Increment(ref _instances);
+                if (Error is not null)
+                {
+                    Error = null; // Recovered from a transient failure.
+                    SessionsChanged?.Invoke();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (PipeSquattedException e)
+            {
+                Error = e.Message; // Someone else owns the name: never share it.
+                SessionsChanged?.Invoke();
+                return;
             }
             catch (Exception e)
             {
-                Error = e.Message;
+                Error = e.Message; // Transient (resources, busy): retry rather than stay down.
                 SessionsChanged?.Invoke();
-                return;
+                try
+                {
+                    await Task.Delay(2000, cancel).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                continue;
             }
 
             try
@@ -136,7 +189,7 @@ public sealed partial class AgentPipeServer : IDisposable
             _connected.Add(pipe);
         try
         {
-            server = McpServer.Create(new StreamServerTransport(pipe, pipe, "nockmon"), _options());
+            server = McpServer.Create(new StreamServerTransport(new LineLimitedStream(pipe), pipe, "nockmon"), _options());
             lock (_lock)
                 _sessions.Add(server);
             SessionsChanged?.Invoke();
@@ -207,9 +260,9 @@ public sealed partial class AgentPipeServer : IDisposable
             {
                 var error = Marshal.GetLastPInvokeError();
                 handle.Dispose();
-                throw new IOException(first && error == ERROR_ACCESS_DENIED
-                    ? "Another process already uses NockMon's agent pipe (another NockMon instance, or a program impersonating it)."
-                    : $"Cannot create the agent pipe (error {error}).");
+                throw first && error == ERROR_ACCESS_DENIED
+                    ? new PipeSquattedException("Another process already uses NockMon's agent pipe (another NockMon instance, or a program impersonating it).")
+                    : new IOException($"Cannot create the agent pipe (error {error}).");
             }
             return new NamedPipeServerStream(PipeDirection.InOut, isAsync: true, isConnected: false, handle);
         }

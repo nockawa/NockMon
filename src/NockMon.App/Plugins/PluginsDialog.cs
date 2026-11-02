@@ -27,6 +27,7 @@ internal sealed class PluginsDialog
     private readonly SelectorBar _tabs = new();
     /// <summary>Latest version of each plugin per feed (<see cref="LatestKey"/>): an update only comes from the feed a plugin was installed from.</summary>
     private Dictionary<string, PluginListing>? _latest;
+    private readonly Dictionary<string, IPluginFeed> _feeds = new(StringComparer.OrdinalIgnoreCase);
 
     private static string LatestKey(string feed, string id) => $"{feed}\n{id.ToLowerInvariant()}";
     private CancellationTokenSource? _searching;
@@ -234,7 +235,9 @@ internal sealed class PluginsDialog
     private async Task<(List<PluginListing> Listings, List<string> Errors)> SearchAllAsync(string? query, CancellationToken cancel)
     {
         var prerelease = _session.Settings.PluginPrerelease;
-        var feeds = _session.Settings.PluginSources.Select(s => PluginFeeds.Create(s, PluginRuntime.Http)).ToList();
+        // Kept across searches: a NuGet feed fetches its service index once.
+        var feeds = _session.Settings.PluginSources
+            .Select(s => _feeds.TryGetValue(s, out var feed) ? feed : _feeds[s] = PluginFeeds.Create(s, PluginRuntime.Http)).ToList();
         var tasks = feeds.Select(async f =>
         {
             try

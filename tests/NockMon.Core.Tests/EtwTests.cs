@@ -162,7 +162,9 @@ public class EtwIntegrationTests
             Thread.Sleep(1500); // Session startup.
             using (var p = Process.Start(new ProcessStartInfo("cmd.exe", "/c echo nockmon-etw-test") { UseShellExecute = false, CreateNoWindow = true })!)
                 p.WaitForExit();
-            File.WriteAllBytes(Path.Combine(Path.GetTempPath(), "nockmon-etw.bin"), new byte[1 << 20]);
+            var file = Path.Combine(Path.GetTempPath(), $"nockmon-etw-{Guid.NewGuid():N}.bin");
+            File.WriteAllBytes(file, new byte[1 << 20]);
+            File.Delete(file);
             Thread.Sleep(2500); // Real-time buffers flush about every second.
 
             monitor.HarvestSample(out var totals);
@@ -259,5 +261,18 @@ public class EtwIntegrationTests
         map.Refresh();
         Assert.True(map.Count > 50);
         Assert.Equal("unknown", map.Resolve(1));
+
+        var modules = map.Current;
+        var kernel = Array.FindIndex(modules.Names, n => n.Equals("ntoskrnl.exe", StringComparison.OrdinalIgnoreCase));
+        Assert.True(kernel >= 0, string.Join(", ", modules.Names.Take(5)));
+        Assert.True(modules.Sizes[kernel] > 1 << 20);
+        Assert.Equal("ntoskrnl.exe", map.Resolve(modules.Bases[kernel] + 0x1000), ignoreCase: true);
+        // Past the end of the last image: no driver there.
+        var last = modules.Bases.Length - 1;
+        Assert.Equal("unknown", map.Resolve(modules.Bases[last] + modules.Sizes[last] + 0x1000));
+        Assert.All(modules.Names, n => Assert.DoesNotContain(@"\", n)); // File names, not paths.
+
+        map.Refresh(); // Unchanged: the same snapshot is kept.
+        Assert.Same(modules, map.Current);
     }
 }

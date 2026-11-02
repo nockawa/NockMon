@@ -51,6 +51,8 @@ public class ProcessControlTests
 
         Assert.Equal([new ProcessKey(11, 110), new ProcessKey(12, 120)], ProcessControl.Descendants(processes, new ProcessKey(10, 100)));
         Assert.Empty(ProcessControl.Descendants(processes, new ProcessKey(15, 140)));
+        // Several roots (a grouped row): each descendant once, roots excluded.
+        Assert.Equal([new ProcessKey(12, 120)], ProcessControl.Descendants(processes, [new ProcessKey(10, 100), new ProcessKey(11, 110)]));
     }
 
     [Fact]

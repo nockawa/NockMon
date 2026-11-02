@@ -12,11 +12,11 @@
   </PropertyGroup>
 
   <!--
-    The host provides the SDK, the Windows App SDK (projections, bootstrapper, WebView2) and CsWinRT: not copied to the
+    The host provides the SDK, the Windows App SDK (projections, bootstrapper, WebView2), Win2D and CsWinRT: not copied to the
     output, so the folder holds only the plugin and its own dependencies. NockMonKeepHostFiles=true disables this.
   -->
   <PropertyGroup>
-    <_McmHostPattern>(?i)^(NockMon\.Sdk|Microsoft\.WinUI|Microsoft\.Windows\..+|Microsoft\.WindowsAppRuntime.*|Microsoft\.InteractiveExperiences.*|Microsoft\.Security\.Authentication\.OAuth.*|Microsoft\.Web\.WebView2.*|WebView2Loader|WinRT\.Runtime)\.(dll|pdb|xml|winmd|pri)$</_McmHostPattern>
+    <_McmHostPattern>(?i)^(NockMon\.Sdk|Microsoft\.WinUI|Microsoft\.Windows\..+|Microsoft\.WindowsAppRuntime.*|Microsoft\.InteractiveExperiences.*|Microsoft\.Security\.Authentication\.OAuth.*|Microsoft\.Web\.WebView2.*|WebView2Loader|WinRT\.Runtime|Microsoft\.Graphics\.Canvas.*)\.(dll|pdb|xml|winmd|pri)$</_McmHostPattern>
   </PropertyGroup>
 
   <Target Name="_NockMonDropHostFiles" AfterTargets="ResolveReferences;ResolvePackageAssets" Condition="'$(NockMonKeepHostFiles)' != 'true'">

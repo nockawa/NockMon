@@ -1,4 +1,4 @@
-; NockMon installer (Inno Setup 6). Built by tools/release/build.ps1, one installer per architecture:
+﻿; NockMon installer (Inno Setup 6). Built by tools/release/build.ps1, one installer per architecture:
 ;   ISCC /DAppVersion=1.0.1 /DArch=x64 /DSourceDir=<self-contained publish folder> /DOutputDir=<folder> NockMon.iss
 ; Per-machine install in Program Files: NockMon always runs elevated, so its files must not be writable by the user's
 ; non-elevated processes (a per-user folder would let any of them plant code that then runs as administrator).

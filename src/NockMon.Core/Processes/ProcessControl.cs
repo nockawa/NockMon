@@ -49,21 +49,37 @@ public static unsafe partial class ProcessControl
 
     /// <summary>The descendants of <paramref name="root"/> in <paramref name="processes"/>, children before grandchildren.
     /// A process whose parent PID matches but started before the parent is not its child (the parent PID was reused).</summary>
-    public static List<ProcessKey> Descendants(ReadOnlySpan<ProcessStats> processes, ProcessKey root)
+    public static List<ProcessKey> Descendants(ReadOnlySpan<ProcessStats> processes, ProcessKey root) => Descendants(processes, [root]);
+
+    /// <summary>
+    /// The descendants of every root (each once, roots excluded), children before grandchildren. One pass builds the
+    /// children per parent PID: linear in the processes, whatever the depth and the number of roots.
+    /// </summary>
+    public static List<ProcessKey> Descendants(ReadOnlySpan<ProcessStats> processes, IReadOnlyCollection<ProcessKey> roots)
     {
+        var children = new Dictionary<int, List<ProcessKey>>();
+        foreach (ref readonly var p in processes)
+        {
+            if (p.ParentPid == p.Pid)
+                continue; // Its own parent (PID 0): not a tree.
+            if (!children.TryGetValue(p.ParentPid, out var list))
+                children[p.ParentPid] = list = [];
+            list.Add(new ProcessKey(p.Pid, p.CreateTime));
+        }
         var result = new List<ProcessKey>();
-        var seen = new HashSet<ProcessKey> { root };
-        var queue = new Queue<ProcessKey>();
-        queue.Enqueue(root);
+        var seen = new HashSet<ProcessKey>(roots);
+        var queue = new Queue<ProcessKey>(roots);
         while (queue.TryDequeue(out var parent))
         {
-            foreach (ref readonly var p in processes)
+            if (!children.TryGetValue(parent.Pid, out var list))
+                continue;
+            foreach (var child in list)
             {
-                var key = new ProcessKey(p.Pid, p.CreateTime);
-                if (p.ParentPid != parent.Pid || p.Pid == parent.Pid || p.CreateTime < parent.CreateTime || !seen.Add(key))
+                // A child created before its parent names a parent PID that was reused: not this parent's.
+                if (child.CreateTime < parent.CreateTime || !seen.Add(child))
                     continue;
-                result.Add(key);
-                queue.Enqueue(key);
+                result.Add(child);
+                queue.Enqueue(child);
             }
         }
         return result;

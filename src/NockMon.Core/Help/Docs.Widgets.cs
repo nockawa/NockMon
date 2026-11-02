@@ -107,7 +107,7 @@ public static partial class Docs
 
                 - **Subfolders**: with them, the whole tree is walked. Junctions and folder symbolic links are not followed (no loops, no double counting); OneDrive folders are walked.
                 - **Include**: file name patterns counted, e.g. `*.log; *.tmp` (all files when empty). **Exclude**: folder names skipped with their content, e.g. `node_modules; .git; bin; obj`.
-                - **Size on disk**: the space taken on the volume (whole clusters; less for compressed, sparse and online-only files) instead of the files' sizes.
+                - **Size on disk**: the space taken on the volume (whole clusters; less for compressed, sparse and online-only files) instead of the files' sizes. Approximate: a tiny file stored inside its NTFS record still counts one cluster, and a file with several hard links counts once per link.
                 - **Rescan every**: the longest time between two scans. **Rescan on change**: a change rescans the folder after 2 s, at most every 5 s.
                 - A scan never runs sooner than nine times its own duration after the previous one ended (at most 10 % of a core for a huge tree), and folders are scanned one at a time.
 

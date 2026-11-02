@@ -84,12 +84,16 @@ public sealed class ProcessQuery
         return _filter;
     }
 
-    /// <summary>Sums rates and sizes; identity fields keep the first (lowest sorted) instance, start time the earliest.</summary>
+    /// <summary>
+    /// Sums rates and sizes. Identity (PID, create time, parent) is the earliest-started instance's, together: the pair
+    /// stays a real process key (icons, actions), whatever order the scan lists the processes in.
+    /// </summary>
     private static void Accumulate(ref ProcessRow row, in ProcessStats p)
     {
         ref var s = ref row.Stats;
         row.Instances++;
-        s.CreateTime = Math.Min(s.CreateTime, p.CreateTime);
+        if (p.CreateTime < s.CreateTime)
+            (s.Pid, s.CreateTime, s.ParentPid) = (p.Pid, p.CreateTime, p.ParentPid);
         var ops = s.DiskOps + p.DiskOps;
         s.DiskLatencyMs = ops > 0 ? (s.DiskLatencyMs * s.DiskOps + p.DiskLatencyMs * p.DiskOps) / ops : 0; // Weighted by I/Os.
         s.DiskOps = ops;

@@ -38,6 +38,10 @@ public sealed class LayoutSession
 
     public IReadOnlyList<string> Names => _store.List();
 
+    /// <summary>Every layout, the current one with its pending edits; each file read once.</summary>
+    public IReadOnlyList<LayoutDocument> PeekAll() =>
+        _store.LoadAll().Select(l => string.Equals(l.Name, Current.Name, StringComparison.OrdinalIgnoreCase) ? Current : l).ToList();
+
     public void SaveSettings() => _settingsStore.Save(Settings);
 
     public void Switch(string name)

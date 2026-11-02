@@ -85,7 +85,7 @@ public sealed partial class CpuGridWidget : UserControl, IMonitorWidget
             return "";
         return isFraction
             ? (series.Latest * 100).ToString("0", CultureInfo.CurrentCulture) + "%"
-            : _monitor.Format(series.Latest, series.Source.Info.Unit);
+            : _monitor.Format(series.Latest, series.Source.Unit);
     }
 
     /// <summary>Non-fraction metrics (interrupt rate): one nice scale shared by all CPUs.</summary>

@@ -14,6 +14,9 @@ public abstract record SeriesRef
 {
     public abstract MetricInfo Info { get; }
 
+    /// <summary>The unit alone (renderers read it every frame: no <see cref="Info"/> built for it).</summary>
+    public virtual MetricUnit Unit => Info.Unit;
+
     /// <summary>Label used when the user gave none.</summary>
     public abstract string DefaultLabel { get; }
 }
@@ -61,6 +64,8 @@ public sealed record ObjectTypeSeries(string TypeName, ObjectTypeMetric Metric) 
 {
     public override MetricInfo Info => new($"{TypeName} {(Metric == ObjectTypeMetric.Objects ? "objects" : "handles")}",
         Metric == ObjectTypeMetric.Objects ? "Objects" : "Handles", MetricUnit.Count, true);
+
+    public override MetricUnit Unit => MetricUnit.Count;
 
     public override string DefaultLabel => Info.DisplayName;
 }

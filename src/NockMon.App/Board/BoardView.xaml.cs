@@ -147,9 +147,12 @@ public sealed partial class BoardView : UserControl
         RefreshWidgets();
     }
 
-    /// <summary>Bounds of the area the user can place widgets in (visible cells, or unbounded when the board scrolls).</summary>
+    /// <summary>
+    /// Bounds of the area the user can place widgets in: the visible cells; when the board scrolls, as wide (or as wide
+    /// as the widgets already are) and unbounded downwards, so new widgets fill rows below instead of one endless row.
+    /// </summary>
     public GridSize PlacementBounds => _layout?.Board.Overflow == BoardOverflow.Scroll
-        ? new GridSize(int.MaxValue, int.MaxValue)
+        ? new GridSize(Math.Max(VisibleColumns, BoardRules.Extent(_layout.Widgets).Columns), LayoutRepair.MaxCoordinate)
         : new GridSize(VisibleColumns, VisibleRows);
 
     private void AddHost(WidgetConfig widget)
@@ -216,6 +219,11 @@ public sealed partial class BoardView : UserControl
 
         var columns = _geometry.FitCount(Surface.Width);
         var rows = _geometry.FitCount(Surface.Height);
+        GridLines.Visibility = Visibility.Visible;
+        // Every step of a window resize lands here: the same cells (and geometry) keep their rectangles.
+        if ((columns, rows, _geometry) == _gridShown && GridLines.Data is not null)
+            return;
+        _gridShown = (columns, rows, _geometry);
         var group = new GeometryGroup();
         if ((long)columns * rows <= MaxGridCells)
         {
@@ -229,8 +237,9 @@ public sealed partial class BoardView : UserControl
             }
         }
         GridLines.Data = group;
-        GridLines.Visibility = Visibility.Visible;
     }
+
+    private (int Columns, int Rows, BoardGeometry Geometry) _gridShown;
 
     private void OnDragStarted(WidgetHost host, DragKind kind)
     {

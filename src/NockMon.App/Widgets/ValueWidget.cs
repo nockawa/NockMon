@@ -50,7 +50,7 @@ public sealed partial class ValueWidget : UserControl, IMonitorWidget
     {
         _windowSamples = SeriesData.ReadAll(_monitor, _series, TimeSpan.FromSeconds(_config.SparklineSeconds));
         var s = _series[0];
-        _value.Text = s.Error is not null ? "error" : s.Count > 0 ? _monitor.Format(s.Latest, s.Source.Info.Unit) : "–";
+        _value.Text = s.Error is not null ? "error" : s.Count > 0 ? _monitor.Format(s.Latest, s.Source.Unit) : "–";
         _sparkline.Invalidate();
     }
 

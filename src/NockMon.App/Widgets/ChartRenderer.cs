@@ -37,7 +37,7 @@ public static class ChartRenderer
         if (plot.Height < 4)
             return;
 
-        var unit = series[0].Source.Info.Unit;
+        var unit = series[0].Source.Unit;
         var (yMin, yMax) = style.ZeroBased || style.Stacked ? (0d, ComputeMax(series, unit, style.Stacked, monitor)) : FitRange(series);
 
         if (style.ShowGrid)
@@ -265,7 +265,7 @@ public static class ChartRenderer
         var text = Palette.Text(style.Theme);
         foreach (var s in series)
         {
-            var value = s.Error is not null ? "error" : s.Count > 0 ? monitor.Format(s.Latest, s.Source.Info.Unit) : "–";
+            var value = s.Error is not null ? "error" : s.Count > 0 ? monitor.Format(s.Latest, s.Source.Unit) : "–";
             using var layout = new CanvasTextLayout(ds, $"{s.Label}  {value}", LegendFormat, 10_000, lineHeight);
             var width = (float)layout.LayoutBounds.Width + 14;
             if (x > area.X && x + width > maxX)

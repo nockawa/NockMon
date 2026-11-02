@@ -44,6 +44,7 @@ public sealed class HistoryStore
     private float[] _gpuScratch = [];
     private float[] _scanScratch = [];
     private float[] _scratch = [];
+    private int[] _slotScratch = [];
 
     /// <summary>One image name's per-scan history: sparse, most fields are zero most of the time (see <see cref="SparseRing"/>).</summary>
     private sealed class NameSeries(string name, int capacity)
@@ -122,8 +123,9 @@ public sealed class HistoryStore
         }
 
         _seenPatterns.Clear();
-        foreach (var aggregate in watched)
+        for (var w = 0; w < watched.Count; w++) // Indexed: no boxed enumerator per sample.
         {
+            var aggregate = watched[w];
             if (!_watched.TryGetValue(aggregate.Pattern, out var series))
                 _watched[aggregate.Pattern] = series = new WatchedSeries(Capacity) { FirstSample = TotalSamples };
             for (var f = 0; f < ProcessFieldCount; f++)
@@ -163,8 +165,9 @@ public sealed class HistoryStore
     private void AppendFolders(int slot, IReadOnlyList<Folders.FolderReading> folders)
     {
         _seenFolders.Clear();
-        foreach (var (scope, result) in folders)
+        for (var i = 0; i < folders.Count; i++)
         {
+            var (scope, result) = folders[i];
             if (!_folders.TryGetValue(scope, out var rings))
                 _folders[scope] = rings = new FolderRings(Capacity, TotalSamples);
             for (var m = 0; m < FolderMetricCount; m++)
@@ -353,7 +356,9 @@ public sealed class HistoryStore
 
         var scans = ScanCount;
         var firstScan = TotalScans - scans;
-        Span<int> slots = scans <= 1024 ? stackalloc int[scans] : new int[scans];
+        if (_slotScratch.Length < scans)
+            _slotScratch = new int[ScanCapacity];
+        var slots = _slotScratch.AsSpan(0, scans);
         var count = 0;
         for (var k = 0; k < scans; k++)
         {

@@ -292,7 +292,8 @@ internal static class PluginRuntime
 
     private static HttpClient CreateHttp()
     {
-        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        // A package is buffered whole: capped, a hostile feed cannot exhaust the elevated process's memory.
+        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60), MaxResponseContentBufferSize = 256 * 1024 * 1024 };
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"NockMon/{HostVersion.ToString(3)}");
         return http;
     }

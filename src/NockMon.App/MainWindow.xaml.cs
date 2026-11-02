@@ -55,10 +55,16 @@ public sealed partial class MainWindow : Window
         var size = BarIcon.SmallIconSize(_hwnd);
         var windowIcon = BarIcon.Create(size, [0.3f, 0.5f, 0.4f, 0.7f, 0.6f, 0.9f, 0.5f, 0.8f, 0.6f, 0.4f, 0.7f, 1f, 0.8f, 0.6f]);
         AppWindow.SetIcon(Microsoft.UI.Win32Interop.GetIconIdFromIcon(windowIcon));
-        _tray = new TrayIcon(_hwnd, BarIcon.Create(size, []), "NockMon");
+        _tray = new TrayIcon(_hwnd, BarIcon.Create(BarIcon.TrayIconSize(), []), "NockMon");
         _tray.Activated += ShowFromTray;
         _tray.MenuRequested += OnTrayMenu;
-        Closed += (_, _) => _tray.Dispose();
+        Closed += (_, _) =>
+        {
+            _monitor.Updated -= OnMonitorUpdated; // First: a queued tick must not reach the disposed tray.
+            _tray.Dispose();
+            if (windowIcon != 0)
+                TrayIcon.DestroyIcon(windowIcon);
+        };
         if (Core.Persistence.AppPaths.StartupWarning is { } warning)
             ShowInfo(InfoBarSeverity.Warning, "Data folder", warning);
         SingleInstance.Listen(_hwnd, ShowFromTray, Exit, () =>
@@ -232,7 +238,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdateTray()
     {
-        var size = BarIcon.SmallIconSize(_hwnd);
+        var size = BarIcon.TrayIconSize();
         var (count, cpu, used, total) = _monitor.Engine.Read((buffer: _trayHistory, size: size - 2), static (state, s, h) =>
         {
             var n = h.Read(new SystemSeries(SystemMetric.Cpu), state.buffer.AsSpan(0, Math.Min(state.size, state.buffer.Length)));
@@ -245,8 +251,28 @@ public sealed partial class MainWindow : Window
 
         var tip = string.Create(CultureInfo.CurrentCulture,
             $"NockMon\nCPU {_monitor.Format(cpu, MetricUnit.Cpu)}\nRAM {MetricFormatter.FormatBytes(used)} / {MetricFormatter.FormatBytes(total)}");
-        _tray.Update(BarIcon.Create(size, history), tip);
+        // Unchanged pixels and tooltip (the usual case on an idle machine): no new icon, no cross-process call.
+        var inner = size - 2;
+        var shown = history.Length > inner ? history[^inner..] : history;
+        if (_trayHeights.Length != inner)
+            _trayHeights = new byte[inner];
+        var changed = tip != _trayTip;
+        for (var i = 0; i < inner; i++)
+        {
+            var height = i < shown.Length ? (byte)MathF.Round(Math.Clamp(shown[i], 0, 1) * inner) : (byte)0;
+            changed |= height != _trayHeights[i];
+            _trayHeights[i] = height;
+        }
+        if (!changed)
+            return;
+        if (BarIcon.Create(size, history) is var icon && icon == 0)
+            return; // Out of GDI resources: keep the current icon.
+        _trayTip = tip;
+        _tray.Update(icon, tip);
     }
+
+    private byte[] _trayHeights = [];
+    private string? _trayTip;
 
     private void OnClosing(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
     {

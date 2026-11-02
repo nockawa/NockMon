@@ -46,8 +46,12 @@ internal static class ProcessMenu
     public static MenuFlyout Create(ProcessTarget target, MonitorService monitor, XamlRoot root, Func<string> rowText)
     {
         var self = target.Instances.Any(k => k.Pid == Environment.ProcessId);
-        var kernel = target.Instances.Any(k => ProcessControl.IsKernelProcess(k.Pid));
-        var critical = !kernel && target.Instances.Any(k => ProcessControl.IsCritical(k) == true);
+        // The kernel's own processes beyond PID 4 have no image and refuse every action: told by name (a user process
+        // with such a name only loses the menu's actions).
+        var kernel = target.Instances.Any(k => ProcessControl.IsKernelProcess(k.Pid)) || KernelNames.Contains(target.Name);
+        // A protected process refuses the critical query (null): csrss, wininit, services are both; treated as critical.
+        var critical = !kernel && target.Instances.Any(k => ProcessControl.IsCritical(k) is true ||
+                                                            (ProcessControl.IsCritical(k) is null && ProcessDetails.ReadProtection(k) is not null));
         var canEnd = !self && !kernel && !critical;
         var canSuspend = canEnd && !target.Name.Equals("dwm.exe", StringComparison.OrdinalIgnoreCase);
 
@@ -73,7 +77,8 @@ internal static class ProcessMenu
         menu.Items.Add(CopyMenu(target, rowText));
         menu.Items.Add(new MenuFlyoutSeparator());
 
-        var chart = new MenuFlyoutSubItem { Text = target.IsGroup ? $"Chart (all {target.Name})" : "Chart", Icon = Glyph("") };
+        // By name, as process series are: every instance of the image, now and later.
+        var chart = new MenuFlyoutSubItem { Text = $"Chart (all {target.Name})", Icon = Glyph("") };
         foreach (var field in ChartFields)
             chart.Items.Add(Item(MetricCatalog.Get(field).DisplayName, null, () => ChartRequested?.Invoke(target.Name, field)));
         menu.Items.Add(chart);
@@ -87,7 +92,7 @@ internal static class ProcessMenu
         {
             Text = target.IsGroup ? "Create dump (one process: ungroup)" : "Create dump",
             Icon = Glyph(""),
-            IsEnabled = !target.IsGroup && !kernel,
+            IsEnabled = !target.IsGroup && !kernel && !self, // A dump of itself can deadlock (loader and heap locks).
         };
         dump.Items.Add(Item("Minidump (stacks, handles)…", null, () => _ = Dump(target, root, full: false)));
         dump.Items.Add(Item("Full dump (whole memory)…", null, () => _ = Dump(target, root, full: true)));
@@ -98,6 +103,8 @@ internal static class ProcessMenu
         menu.Items.Add(Item("End process tree", "", () => _ = EndTree(target, monitor, root), canEnd));
         return menu;
     }
+
+    private static readonly HashSet<string> KernelNames = new(StringComparer.OrdinalIgnoreCase) { "Registry", "Memory Compression", "Secure System" };
 
     private static string? Restriction(bool self, bool kernel, bool critical, bool canSuspend) =>
         self ? "NockMon itself: use Exit to end it"
@@ -128,7 +135,14 @@ internal static class ProcessMenu
             Raise(InfoBarSeverity.Warning, "Open file location", "The process has exited, or its path cannot be read.");
             return;
         }
-        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = false });
+        try
+        {
+            using var explorer = Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = false });
+        }
+        catch (System.ComponentModel.Win32Exception e)
+        {
+            Raise(InfoBarSeverity.Error, "Open file location", e.Message);
+        }
     }
 
     private static void ShowProperties(ProcessTarget target, XamlRoot root)
@@ -261,14 +275,16 @@ internal static class ProcessMenu
         {
             var processes = snapshot.ProcessSpan;
             var keys = new List<ProcessKey>(target.Instances);
-            foreach (var instance in target.Instances)
-                keys.AddRange(ProcessControl.Descendants(processes, instance));
-            keys = keys.Distinct().Where(k => k.Pid != Environment.ProcessId).ToList();
+            keys.AddRange(ProcessControl.Descendants(processes, target.Instances));
+            keys = keys.Where(k => k.Pid != Environment.ProcessId).ToList();
             var names = new Dictionary<ProcessKey, string>();
             foreach (ref readonly var p in processes)
                 names[new ProcessKey(p.Pid, p.CreateTime)] = p.Name;
             return (keys, names);
         });
+        // Critical descendants are left alone (ending one crashes Windows); listed in the question.
+        var spared = keys.Skip(target.Instances.Count).Where(k => ProcessControl.IsCritical(k) is true).ToHashSet();
+        keys = keys.Where(k => !spared.Contains(k)).ToList();
         var descendants = keys.Skip(target.Instances.Count).ToList();
         var groups = descendants.GroupBy(k => names.GetValueOrDefault(k, "?"), StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(g => g.Count())
@@ -278,6 +294,8 @@ internal static class ProcessMenu
         var message = descendants.Count == 0
             ? $"End {target}? It has no child process. Unsaved work in it is lost."
             : $"End {target} and its {descendants.Count} descendant process{(descendants.Count == 1 ? "" : "es")} ({listed})? Unsaved work in them is lost.";
+        if (spared.Count > 0)
+            message += $" {spared.Count} critical descendant{(spared.Count == 1 ? " is" : "s are")} left running.";
         if (await Confirm(root, "End process tree", message, "End all"))
             Apply("End process tree", target with { Instances = keys }, ProcessControl.Kill, $"Ended {keys.Count} process{(keys.Count == 1 ? "" : "es")}.");
     }

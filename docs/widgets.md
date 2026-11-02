@@ -86,7 +86,7 @@ enough. Double-click opens the folder. Default size 5×4, minimum 2×2.
 | Include files | File name patterns counted: `*.log; *.tmp`. All files when empty. |
 | Exclude folders | Folder names skipped with their content: `node_modules; .git; bin; obj`. |
 | Subfolders | Walk the whole tree (default) or the folder only. |
-| Size on disk | Space taken on the volume (whole clusters; less for compressed, sparse and online-only files) instead of the files' sizes. |
+| Size on disk | Space taken on the volume (whole clusters; less for compressed, sparse and online-only files) instead of the files' sizes. Approximate: a tiny file stored inside its NTFS record still counts one cluster, and a file with several hard links counts once per link. |
 | Rescan every | Longest time between two scans (default 60 s, at least 5 s). |
 | Rescan on change | A change in the folder rescans it after 2 s, at most every 5 s (default on). |
 | Window | Time span of the chart and the growth (default 1 h). |

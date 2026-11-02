@@ -7,6 +7,8 @@ using NockMon.Core.Sampling;
 
 namespace NockMon.Core.Tests;
 
+/// <summary>Timing and memory-list checks: alone, not beside other tests allocating and spinning.</summary>
+[Collection(typeof(CpuMeasurementCollection))]
 public class KernelMetricsTests
 {
     private static RawSample Sample(double at, uint contextSwitches, uint pageFaults, uint timer100ns = 10_000,
@@ -187,10 +189,16 @@ public class KernelProbeIntegrationTests
         using var probe = new NativeSystemProbe();
         var sample = new RawSample();
         probe.CollectSystem(sample);
-        var sw = Stopwatch.StartNew();
-        for (var i = 0; i < 20; i++)
+        var times = new double[21];
+        for (var i = 0; i < times.Length; i++)
+        {
+            var start = Stopwatch.GetTimestamp();
             probe.CollectSystem(sample);
-        Assert.True(sw.Elapsed.TotalMilliseconds / 20 < 3, $"CollectSystem took {sw.Elapsed.TotalMilliseconds / 20:0.00} ms");
+            times[i] = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        }
+        Array.Sort(times);
+        var median = times[times.Length / 2]; // A preempted call or two must not fail it.
+        Assert.True(median < 3, $"CollectSystem took {median:0.00} ms (median)");
     }
 
     [Fact]

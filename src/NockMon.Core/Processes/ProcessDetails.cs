@@ -56,6 +56,20 @@ public sealed partial record ProcessDetails(
 
     private static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
 
+    /// <summary>The protection alone (<see cref="Query"/>'s <c>Protection</c>): null for an ordinary process or one that cannot be opened.</summary>
+    public static string? ReadProtection(ProcessKey key)
+    {
+        try
+        {
+            using var process = ProcessControl.Open(key, 0);
+            return ReadProtection(process);
+        }
+        catch (ProcessControlException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>The command line alone (what <see cref="Query"/> reads, without the token, account and file version lookups).</summary>
     public static string? ReadCommandLine(ProcessKey key)
     {

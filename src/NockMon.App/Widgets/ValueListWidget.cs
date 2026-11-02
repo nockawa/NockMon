@@ -69,7 +69,7 @@ public sealed partial class ValueListWidget : UserControl, IMonitorWidget
 
         for (var i = 0; i < _items.Length; i++)
         {
-            var text = _failed[i] ? "–" : _monitor.Format(_latest[i], _items[i].Info.Unit);
+            var text = _failed[i] ? "–" : _monitor.Format(_latest[i], _items[i].Unit);
             if (_values[i].Text != text)
                 _values[i].Text = text;
         }
