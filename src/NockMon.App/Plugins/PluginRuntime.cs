@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Security.Cryptography;
+using System.Text;
 using NockMon.Core.Layout;
 using NockMon.Core.Persistence;
 using NockMon.Core.Plugins;
@@ -80,19 +82,24 @@ internal static class PluginRuntime
                 Shell.Win32.MB_YESNO | Shell.Win32.MB_ICONWARNING) != Shell.Win32.IDYES)
             commandLine.Clear();
         CommandLineFolders = commandLine;
+        var saved = developmentFolders.Where(f => !commandLine.Contains(f, StringComparer.OrdinalIgnoreCase)).ToList();
 
         try
         {
             Store.ApplyPending();
+            ApplySnapshots(commandLine.Concat(saved));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             Debug.WriteLine($"Plugin housekeeping failed: {e.Message}");
         }
-        CleanDevelopmentCopies();
+        CleanLegacyCopies();
 
-        foreach (var folder in commandLine.Concat(developmentFolders).Distinct(StringComparer.OrdinalIgnoreCase))
-            LoadDevelopment(folder);
+        // Command-line folders were just confirmed: snapshot them now. Saved ones load their last snapshot.
+        foreach (var folder in commandLine.Distinct(StringComparer.OrdinalIgnoreCase))
+            LoadDevelopment(folder, snapshot: true);
+        foreach (var folder in saved.Distinct(StringComparer.OrdinalIgnoreCase))
+            LoadDevelopment(folder, snapshot: false);
         foreach (var plugin in Store.List().Where(p => !p.PendingRemoval))
         {
             if (FindLoaded(plugin.Id) is { } other)
@@ -148,17 +155,45 @@ internal static class PluginRuntime
         return loaded.Error is null && loaded.Widgets.Count > 0;
     }
 
-    /// <summary>Loads a development folder added from the UI. Already loaded plugin: reloaded at the next start.</summary>
-    public static LoadedPlugin LoadDevelopment(string folder)
+    /// <summary>
+    /// Loads a development folder from its snapshot: a copy in the protected data folder, taken only when the user asks
+    /// (<paramref name="snapshot"/>: adding the folder, Reload, a confirmed <c>--plugin</c>). The build folder itself is
+    /// never loaded: any non-elevated program can change it, and plugins run as administrator. Already loaded plugin:
+    /// reloaded at the next start.
+    /// </summary>
+    public static LoadedPlugin LoadDevelopment(string folder, bool snapshot)
     {
+        var copy = SnapshotFor(folder);
+        try
+        {
+            if (snapshot)
+                TakeSnapshot(folder);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            var failed = new LoadedPlugin { Directory = folder, DevelopmentFolder = folder, Error = $"Cannot copy the folder: {e.Message}" };
+            _loaded.Add(failed);
+            return failed;
+        }
+        if (!System.IO.Directory.Exists(copy))
+        {
+            var missing = new LoadedPlugin
+            {
+                Directory = folder, DevelopmentFolder = folder,
+                Error = "No snapshot of this folder yet: click Reload (Plugins, Development), then restart.",
+            };
+            _loaded.Add(missing);
+            return missing;
+        }
+
         PluginManifest manifest;
         try
         {
-            manifest = PluginManifest.Load(folder);
+            manifest = PluginManifest.Load(copy);
         }
         catch (InvalidDataException e)
         {
-            var failed = new LoadedPlugin { Directory = folder, DevelopmentFolder = folder, Error = e.Message };
+            var failed = new LoadedPlugin { Directory = copy, DevelopmentFolder = folder, Error = e.Message };
             _loaded.Add(failed);
             return failed;
         }
@@ -167,20 +202,53 @@ internal static class PluginRuntime
             _reloadPending = true;
             return running;
         }
-
-        // Load from a copy: the build can overwrite the output folder while the app runs.
-        var copy = Path.Combine(Path.GetTempPath(), "NockMon", "DevPlugins", $"{manifest.Id}-{Environment.ProcessId}-{Environment.TickCount64}");
-        try
-        {
-            CopyDirectory(folder, copy);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            var failed = new LoadedPlugin { Directory = folder, DevelopmentFolder = folder, Manifest = manifest, Error = $"Cannot copy the folder: {e.Message}" };
-            _loaded.Add(failed);
-            return failed;
-        }
         return Load(copy, folder);
+    }
+
+    /// <summary>Snapshots of development folders, in the protected data folder.</summary>
+    private static string SnapshotRoot => Path.Combine(AppPaths.Root, "DevPlugins");
+
+    /// <summary>The snapshot of a development folder: named by a hash of its full path.</summary>
+    private static string SnapshotFor(string folder) =>
+        Path.Combine(SnapshotRoot, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant())))[..16]);
+
+    /// <summary>
+    /// Copies the folder's current build (links skipped) as its snapshot: in place when nothing is loaded from the
+    /// snapshot, else beside it (".pending"), swapped in at the next start (loaded assemblies are locked).
+    /// </summary>
+    public static void TakeSnapshot(string folder)
+    {
+        var target = SnapshotFor(folder);
+        var pending = target + ".pending";
+        if (System.IO.Directory.Exists(pending))
+            System.IO.Directory.Delete(pending, recursive: true);
+        CopyDirectory(folder, pending);
+        if (_loaded.Any(l => string.Equals(l.Directory, target, StringComparison.OrdinalIgnoreCase)))
+            return;
+        if (System.IO.Directory.Exists(target))
+            System.IO.Directory.Delete(target, recursive: true);
+        System.IO.Directory.Move(pending, target);
+    }
+
+    /// <summary>Start-up, before loading: pending snapshots replace the current ones; snapshots of folders no longer listed go.</summary>
+    private static void ApplySnapshots(IEnumerable<string> folders)
+    {
+        if (!System.IO.Directory.Exists(SnapshotRoot))
+            return;
+        var kept = folders.Select(SnapshotFor).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var pending in System.IO.Directory.EnumerateDirectories(SnapshotRoot, "*.pending"))
+        {
+            var target = pending[..^".pending".Length];
+            if (System.IO.Directory.Exists(target))
+                System.IO.Directory.Delete(target, recursive: true);
+            System.IO.Directory.Move(pending, target);
+        }
+        foreach (var snapshot in System.IO.Directory.EnumerateDirectories(SnapshotRoot))
+        {
+            if (!kept.Contains(snapshot))
+                System.IO.Directory.Delete(snapshot, recursive: true);
+        }
     }
 
     private static LoadedPlugin Load(string directory, string? developmentFolder)
@@ -261,18 +329,25 @@ internal static class PluginRuntime
         plugin.Widgets.Add(widget);
     }
 
+    /// <summary>Links (junctions, symbolic links) are skipped: one could pull any folder of the machine in.</summary>
     private static void CopyDirectory(string source, string target)
     {
-        foreach (var file in System.IO.Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        System.IO.Directory.CreateDirectory(target);
+        foreach (var entry in new DirectoryInfo(source).EnumerateFileSystemInfos())
         {
-            var destination = Path.Combine(target, Path.GetRelativePath(source, file));
-            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(file, destination, overwrite: true);
+            if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                continue;
+            var destination = Path.Combine(target, entry.Name);
+            if (entry is DirectoryInfo)
+                CopyDirectory(entry.FullName, destination);
+            else
+                ((FileInfo)entry).CopyTo(destination, overwrite: true);
         }
     }
 
     /// <summary>Copies left by previous sessions (locked while they ran).</summary>
-    private static void CleanDevelopmentCopies()
+    /// <summary>Copies made in %TEMP% by NockMon 1.1 (development plugins are now loaded from protected snapshots).</summary>
+    private static void CleanLegacyCopies()
     {
         var root = Path.Combine(Path.GetTempPath(), "NockMon", "DevPlugins");
         if (!System.IO.Directory.Exists(root))

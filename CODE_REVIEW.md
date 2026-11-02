@@ -39,6 +39,7 @@
 | | Items |
 |---|---|
 | **Fixed** | C1, H1–H5; every Medium except M31; every Low except those below; P1, P3, P5–P9, P13, P14, P16; A1–A6, A8–A14; T8, T9 (pipe descriptor), T10, T15; D7, D11, D13, D16 (parallel tests, x64-only pull requests), D17. Tests were added with most fixes (272 in all). |
+| **Follow-up to C1** | Development plugin folders: NockMon loads a snapshot kept in the protected data folder, taken only when you add the folder, click Reload, or confirm `--plugin`; never the build folder, which any program can change. |
 | **Disproved** | M11: a new elevated test shows bytes written through to disk are attributed to the writing process. Kept as a regression test. |
 | **Accepted as is** | L45: the workspace-vs-screen offset in the off-monitor check is a taskbar's size. P2: the pool-tag sort runs once per scan, on a small row type. P11: the process events widget only formats when events arrive, and cells are assigned only when their text changes. A7: the tray tooltip string is still built each sample, but nothing reaches the shell unless it changed. |
 | **Not done** | M31, L17 and L5: need a mixed-DPI setup, a live theme switch, and more than 64 logical processors. L22, L28 and L34 (M each). P4, P10, P12, P15. T1–T7, T11–T14, T16, T17. D1–D6, D8–D10, D12, D14, D15. |

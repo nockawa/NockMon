@@ -494,7 +494,7 @@ internal sealed class PluginsDialog
             - Implement `IWidgetPlugin` (one class per widget kind) and build: the output folder gets a `nockmon-plugin.json`.
             - Add that folder below, or start NockMon with `nockmon --plugin <folder>`.
 
-            A development plugin is loaded from a copy of the folder: rebuild any time, then restart to reload it. It takes precedence over an installed copy of the same plugin. To test the package itself, `dotnet pack` it and add the output folder as a source in Browse.
+            A development plugin is loaded from a snapshot of the folder, kept where only administrators can change it: plugins run as administrator, and any program could change your build folder. The snapshot is taken when you add the folder, click **Reload**, or start NockMon with `--plugin`; rebuild any time, then Reload and restart. It takes precedence over an installed copy of the same plugin. To test the package itself, `dotnet pack` it and add the output folder as a source in Browse.
             """));
 
         var settings = _session.Settings;
@@ -515,6 +515,25 @@ internal sealed class PluginsDialog
             var actions = new StackPanel { Spacing = 4 };
             if (!commandLine)
             {
+                var reload = new Button { Content = "Reload", MinWidth = 90 };
+                ToolTipService.SetToolTip(reload, "Snapshot the folder's current build; it loads at the next start.");
+                reload.Click += (_, _) =>
+                {
+                    try
+                    {
+                        PluginRuntime.TakeSnapshot(folder);
+                        PluginRuntime.MarkRestartRequired();
+                        status.Text = "Snapshot taken: restart NockMon to load it.";
+                        status.Foreground = Brush("TextFillColorSecondaryBrush");
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        status.Text = $"Cannot copy the folder: {e.Message}";
+                        status.Foreground = Brush("SystemFillColorCriticalBrush");
+                    }
+                    UpdateRestartBar();
+                };
+                actions.Children.Add(reload);
                 var remove = new Button { Content = "Remove", MinWidth = 90 };
                 remove.Click += (_, _) =>
                 {
@@ -552,7 +571,7 @@ internal sealed class PluginsDialog
                 return;
             settings.DevPluginFolders.Add(folder);
             _session.SaveSettings();
-            var loaded = PluginRuntime.LoadDevelopment(folder);
+            var loaded = PluginRuntime.LoadDevelopment(folder, snapshot: true); // The user's explicit choice: snapshot now.
             _loadedNew |= loaded.Error is null && loaded.DevelopmentFolder == folder;
             UpdateRestartBar();
             ShowTab();

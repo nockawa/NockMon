@@ -132,7 +132,9 @@ sort by click, say) calls `context.SaveSettings()`.
 2. In NockMon, **Plugins › Development**, add that folder. Or start NockMon with `nockmon --plugin <output folder>`
    (repeatable).
 3. **Edit › Add widget** lists your widgets.
-4. Rebuild any time: the folder is loaded from a copy, so the build is never locked. Restart NockMon to reload.
+4. Rebuild any time: NockMon loads a snapshot of the folder, kept where only administrators can change it (plugins run
+   as administrator; your build folder can be changed by any program). The snapshot is taken when you add the folder,
+   click **Reload**, or start with `--plugin`: after a rebuild, Reload and restart NockMon.
 
 A development folder takes precedence over an installed copy of the same plugin.
 
