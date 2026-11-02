@@ -81,7 +81,7 @@ jobs:
           $version = { param($xml) ([xml]$xml).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1 }
           $old = & $version (git show "${previous}:src/NockMon.Sdk/NockMon.Sdk.csproj" | Out-String)
           $new = & $version (Get-Content src/NockMon.Sdk/NockMon.Sdk.csproj -Raw)
-          if ($old -eq $new) { throw "src/NockMon.Sdk changed since $previous but its version is still $new: bump it." }
+          if ($old -eq $new) { throw "src/NockMon.Sdk changed since $previous but its version is still ${new}: bump it." }
           Write-Host "NockMon.Sdk $old -> $new"
 
       # Pull requests check that everything builds: x64 only (ARM64 is the same code, and doubles the time).
