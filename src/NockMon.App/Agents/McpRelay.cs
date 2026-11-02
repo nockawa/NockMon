@@ -18,13 +18,14 @@ internal static class McpRelay
 
     private static async Task<int> RunAsync()
     {
-        using var pipe = new NamedPipeClientStream(".", AgentPipeServer.DefaultPipeName, PipeDirection.InOut,
-            // CurrentUserOnly: refuses a pipe another account owns (a squatter while NockMon is not running).
-            // Identification: the server may identify the relay, not act as it.
-            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, System.Security.Principal.TokenImpersonationLevel.Identification);
+        // Identification: the server may identify the relay, not act as it.
+        using var pipe = new NamedPipeClientStream(".", AgentPipeServer.DefaultPipeName, PipeDirection.InOut, PipeOptions.Asynchronous,
+            System.Security.Principal.TokenImpersonationLevel.Identification);
         try
         {
             await pipe.ConnectAsync(3000);
+            if (!AgentPipeServer.IsOwnedByCurrentUser(pipe))
+                throw new UnauthorizedAccessException(); // Another account's pipe: a squatter while NockMon is not running.
         }
         catch (UnauthorizedAccessException)
         {

@@ -227,10 +227,11 @@ public sealed class AgentTests : IDisposable
         server.SessionsChanged += () => Interlocked.Increment(ref changes);
         server.Start();
 
-        await using (var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, // As the relays: owner checked, identification only.
-                   System.IO.Pipes.PipeOptions.Asynchronous | System.IO.Pipes.PipeOptions.CurrentUserOnly, System.Security.Principal.TokenImpersonationLevel.Identification))
+        await using (var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, // As the relays: identification only, owner checked.
+                   System.IO.Pipes.PipeOptions.Asynchronous, System.Security.Principal.TokenImpersonationLevel.Identification))
         {
             await pipe.ConnectAsync(5000, TestContext.Current.CancellationToken);
+            Assert.True(AgentPipeServer.IsOwnedByCurrentUser(pipe)); // Elevated or not: compared with the user SID.
             await using var client = await McpClient.CreateAsync(new StreamClientTransport(pipe, pipe),
                 new McpClientOptions { ClientInfo = new Implementation { Name = "test-agent", Version = "1" } },
                 cancellationToken: TestContext.Current.CancellationToken);

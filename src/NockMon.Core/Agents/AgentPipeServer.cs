@@ -54,6 +54,18 @@ public sealed partial class AgentPipeServer : IDisposable
     /// <summary>Per user: an elevated and a non-elevated process of the same user compute the same name. The relay duplicates it.</summary>
     public static string DefaultPipeName { get; } = $"NockMon.Mcp.{WindowsIdentity.GetCurrent().User!.Value}";
 
+    /// <summary>
+    /// The relay's check, after connecting: the pipe belongs to this user, so it is NockMon's and not another account's
+    /// squatting the name while NockMon is not running. Compared with the token's user SID: .NET's
+    /// <c>PipeOptions.CurrentUserOnly</c> compares with its default owner, which is the Administrators group in an
+    /// elevated token, and would refuse an elevated relay (an agent started from an administrator terminal).
+    /// </summary>
+    public static bool IsOwnedByCurrentUser(PipeStream pipe)
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return pipe.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier owner && owner == identity.User;
+    }
+
     /// <summary>Raised (any thread) when a session starts or ends.</summary>
     public event Action? SessionsChanged;
 

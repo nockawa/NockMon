@@ -78,13 +78,19 @@ static async Task<int> RelayMcpAsync()
 {
     // Same name as NockMon.Core.Agents.AgentPipeServer.DefaultPipeName: per user, elevated or not.
     var name = $"NockMon.Mcp.{System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value}";
-    using var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut,
-            // CurrentUserOnly: refuses a pipe another account owns (a squatter while NockMon is not running).
-            // Identification: the server may identify the relay, not act as it.
-            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, System.Security.Principal.TokenImpersonationLevel.Identification);
+    // Identification: the server may identify the relay, not act as it.
+    using var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous,
+        System.Security.Principal.TokenImpersonationLevel.Identification);
     try
     {
         await pipe.ConnectAsync(3000);
+        // Owned by this user (NockMon sets it), not another account squatting the name while NockMon is not running.
+        // Not PipeOptions.CurrentUserOnly: it compares with the token's default owner, the Administrators group when
+        // the relay runs elevated (an agent started from an administrator terminal), and would refuse NockMon's pipe.
+        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        if (pipe.GetAccessControl().GetOwner(typeof(System.Security.Principal.SecurityIdentifier)) is not System.Security.Principal.SecurityIdentifier owner
+            || owner != identity.User)
+            throw new UnauthorizedAccessException();
     }
     catch (UnauthorizedAccessException)
     {
