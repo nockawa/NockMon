@@ -113,10 +113,16 @@ public sealed partial class FolderWidget : UserControl, IMonitorWidget
         var detail = last?.Error ?? Growth();
         Show(_monitor.Format(_size.Latest, MetricUnit.Bytes), files, detail);
         _tip.Text = Tooltip(scope, last, scanner.NextScan(scope), now);
-        _largest.Text = last is { Largest.Count: > 0 } r ? "Largest: " + string.Join(" · ", r.Largest.Select(p => $"{p.Name} {_monitor.Format(p.Bytes, MetricUnit.Bytes)}")) : "";
+        if (!ReferenceEquals(last, _largestFor)) // A new scan: the list only changes then.
+        {
+            _largestFor = last;
+            _largest.Text = last is { Largest.Count: > 0 } r ? "Largest: " + string.Join(" · ", r.Largest.Select(p => $"{p.Name} {_monitor.Format(p.Bytes, MetricUnit.Bytes)}")) : "";
+        }
         _largest.Visibility = ActualHeight >= ListMinHeight && _largest.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         _canvas.Invalidate();
     }
+
+    private FolderScanResult? _largestFor;
 
     /// <summary>"+1.2 GB in 1 h" over the samples shown (the window, or since the first scan).</summary>
     private string Growth()
@@ -181,17 +187,21 @@ public sealed partial class FolderWidget : UserControl, IMonitorWidget
     private void OpenFolder()
     {
         var path = _config.Scope.FullPath;
-        if (!Directory.Exists(path))
-            return;
-        try
+        // Off the UI thread: the existence check blocks for seconds on an unreachable share.
+        _ = Task.Run(() =>
         {
-            // Explorer hands the window to the running (non-elevated) shell.
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true })?.Dispose();
-        }
-        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            // Nothing to report on the board: the folder simply doesn't open.
-        }
+            if (!Directory.Exists(path))
+                return;
+            try
+            {
+                // Explorer hands the window to the running (non-elevated) shell.
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true })?.Dispose();
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                // Nothing to report on the board: the folder simply doesn't open.
+            }
+        });
     }
 
     /// <summary>"45 s", "12 min", "1 h 20 min", "3 d 4 h"; with <paramref name="precise"/>, sub-second durations in ms.</summary>

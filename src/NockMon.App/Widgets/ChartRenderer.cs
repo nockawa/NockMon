@@ -11,7 +11,7 @@ namespace NockMon.Widgets;
 
 /// <param name="ZeroBased">Y axis from 0 (default). False: fitted to the data's range, so a small change of a large value
 /// (a folder's size) shows; not with <paramref name="Stacked"/>.</param>
-public sealed record ChartStyle(bool Stacked, bool ShowLegend, bool ShowGrid, ElementTheme Theme, bool ZeroBased = true);
+public readonly record struct ChartStyle(bool Stacked, bool ShowLegend, bool ShowGrid, ElementTheme Theme, bool ZeroBased = true);
 
 /// <summary>
 /// Time-series rendering: newest sample at the right edge, a window of <c>windowSamples</c> across the width
@@ -202,12 +202,15 @@ public static class ChartRenderer
         double max = 0;
         if (stacked)
         {
-            var n = series.Max(s => s.Count);
+            var n = 0;
+            for (var i = 0; i < series.Count; i++)
+                n = Math.Max(n, series[i].Count);
             for (var k = 0; k < n; k++)
             {
                 double sum = 0;
-                foreach (var s in series)
+                for (var i = 0; i < series.Count; i++) // Indexed: an interface enumerator per sample per frame otherwise.
                 {
+                    var s = series[i];
                     var offset = n - s.Count; // Align on the newest sample.
                     if (k >= offset)
                         sum += s.Values[k - offset];

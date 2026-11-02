@@ -48,6 +48,15 @@ public sealed class FolderTree : IDisposable
 
 public class FolderScanTests
 {
+    [Theory]
+    [InlineData(@"C:\work\.git\objects\ab", true)] // Inside an excluded folder.
+    [InlineData(@"C:\work\src\node_modules\x\y.js", true)]
+    [InlineData(@"C:\work\.git", false)] // The excluded folder itself: not inside it.
+    [InlineData(@"C:\work\src\a.cs", false)]
+    [InlineData(@"C:\work\gitlog.txt", false)]
+    public void IsExcluded_ChangesInsideExcludedFolders(string path, bool expected) =>
+        Assert.Equal(expected, FolderScan.IsExcluded(@"C:\work", FolderScan.Patterns(".git;node_modules"), path));
+
     [Fact]
     public void CountsSizeFilesFolders_AndLargestSubfolders()
     {

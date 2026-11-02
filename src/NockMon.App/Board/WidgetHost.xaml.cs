@@ -74,6 +74,8 @@ public sealed partial class WidgetHost : UserControl
     /// <summary>Pointer position at the start of the current drag, relative to <see cref="DragReference"/>.</summary>
     public Point DragStart => _dragStart;
 
+    private Dictionary<WidgetConfig, ToolTip>? _tooltips;
+
     /// <summary>The widget shown: for a stack, its current item.</summary>
     private WidgetConfig Shown => Widget is Widgets.StackWidget stack ? stack.Current : Config;
 
@@ -83,7 +85,11 @@ public sealed partial class WidgetHost : UserControl
         var title = Shown.Title;
         TitleText.Text = title ?? "";
         TitleText.Visibility = string.IsNullOrEmpty(title) ? Visibility.Collapsed : Visibility.Visible;
-        ToolTipService.SetToolTip(HelpButton, Help.DocView.WidgetTooltip(Shown));
+        // One tooltip per widget shown: a cycling stack would otherwise rebuild its rich text at every switch.
+        _tooltips ??= new Dictionary<WidgetConfig, ToolTip>(ReferenceEqualityComparer.Instance);
+        if (!_tooltips.TryGetValue(Shown, out var tooltip))
+            _tooltips[Shown] = tooltip = Help.DocView.WidgetTooltip(Shown);
+        ToolTipService.SetToolTip(HelpButton, tooltip);
         _help?.IsOpen = false;
     }
 

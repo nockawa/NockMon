@@ -106,6 +106,29 @@ public static partial class FolderScan
     internal static string[] Patterns(string? text) =>
         string.IsNullOrWhiteSpace(text) ? [] : text.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+    /// <summary>
+    /// True when a change at <paramref name="path"/> (under <paramref name="root"/>) cannot affect the scan's counts: it is
+    /// inside an excluded folder. Watcher events there (.git, node_modules churn) need no rescan.
+    /// </summary>
+    private static readonly char[] Separators = [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar];
+
+    internal static bool IsExcluded(string root, string[] exclude, string path)
+    {
+        if (exclude.Length == 0 || path.Length <= root.Length)
+            return false;
+        var relative = path.AsSpan(root.Length).TrimStart(Separators);
+        // The folders on the way (not the last name: a file, or the excluded folder itself being created).
+        var last = relative.LastIndexOfAny(Separators);
+        if (last < 0)
+            return false;
+        foreach (var range in relative[..last].SplitAny(Separators))
+        {
+            if (Matches(exclude, relative[range]))
+                return true;
+        }
+        return false;
+    }
+
     private static bool Matches(string[] patterns, ReadOnlySpan<char> name)
     {
         foreach (var pattern in patterns)

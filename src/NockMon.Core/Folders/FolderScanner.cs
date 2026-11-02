@@ -273,16 +273,25 @@ public sealed class FolderScanner : IDisposable
         var scope = w.Request.Scope;
         try
         {
-            var watcher = new FileSystemWatcher(scope.FullPath)
+            // LastWrite and not also Size: one event per write instead of two. Changes inside excluded folders (.git,
+            // node_modules churn) cannot change the counts: no rescan for them.
+            var root = scope.FullPath;
+            var exclude = FolderScan.Patterns(scope.Exclude);
+            var watcher = new FileSystemWatcher(root)
             {
                 IncludeSubdirectories = scope.Recursive,
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size | NotifyFilters.LastWrite,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite,
                 InternalBufferSize = 64 * 1024,
             };
-            watcher.Changed += (_, _) => OnChanged(w);
-            watcher.Created += (_, _) => OnChanged(w);
-            watcher.Deleted += (_, _) => OnChanged(w);
-            watcher.Renamed += (_, _) => OnChanged(w);
+            void Changed(FileSystemEventArgs e)
+            {
+                if (!FolderScan.IsExcluded(root, exclude, e.FullPath))
+                    OnChanged(w);
+            }
+            watcher.Changed += (_, e) => Changed(e);
+            watcher.Created += (_, e) => Changed(e);
+            watcher.Deleted += (_, e) => Changed(e);
+            watcher.Renamed += (_, e) => Changed(e);
             watcher.Error += (_, _) => OnChanged(w); // Overflow: something changed, rescan.
             watcher.EnableRaisingEvents = true;
             return watcher;

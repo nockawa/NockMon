@@ -29,6 +29,9 @@ public sealed class ProcessQuery
 {
     private readonly Dictionary<string, int> _groups = new(StringComparer.OrdinalIgnoreCase);
     private ProcessRow[] _rows = new ProcessRow[512];
+    private ProcessRow[] _results = new ProcessRow[64];
+    private SortKey[] _keys = new SortKey[512];
+    private int[] _order = new int[512];
     private NamePattern? _filter;
     private int _resultCount;
     private ProcessField _sortField;
@@ -65,15 +68,51 @@ public sealed class ProcessQuery
         }
 
         var rows = _rows.AsSpan(0, count);
-        _sortField = options.SortBy;
-        _sortDescending = options.Descending;
-        rows.Sort(_comparison);
         _resultCount = Math.Min(Math.Max(options.Top, 0), count);
+        if (_results.Length < _resultCount)
+            _results = new ProcessRow[Math.Max(_resultCount, _results.Length * 2)];
+        if (options.SortBy == ProcessField.Name)
+        {
+            _sortField = options.SortBy;
+            _sortDescending = options.Descending;
+            rows.Sort(_comparison);
+            rows[.._resultCount].CopyTo(_results);
+            return Results;
+        }
+
+        // Numeric: sort 16-byte keys and indexes, not the rows (about 240 bytes each, copied by every swap), then copy
+        // out the top ones. This runs under the engine lock, which the sampler waits on.
+        if (_keys.Length < count)
+        {
+            _keys = new SortKey[_rows.Length];
+            _order = new int[_rows.Length];
+        }
+        var keys = _keys.AsSpan(0, count);
+        var order = _order.AsSpan(0, count);
+        for (var i = 0; i < count; i++)
+        {
+            var value = rows[i].GetValue(options.SortBy);
+            keys[i] = new SortKey(options.Descending ? -value : value, rows[i].Stats.Pid);
+            order[i] = i;
+        }
+        keys.Sort(order);
+        for (var i = 0; i < _resultCount; i++)
+            _results[i] = rows[order[i]];
         return Results;
     }
 
+    /// <summary>Sort value (negated for a descending sort), ties by PID for a stable display.</summary>
+    private readonly record struct SortKey(double Value, int Pid) : IComparable<SortKey>
+    {
+        public int CompareTo(SortKey other)
+        {
+            var c = Value.CompareTo(other.Value);
+            return c != 0 ? c : Pid.CompareTo(other.Pid);
+        }
+    }
+
     /// <summary>Rows of the last <see cref="Run"/>. Owned by this query: safe to read after the engine lock is released.</summary>
-    public ReadOnlySpan<ProcessRow> Results => _rows.AsSpan(0, _resultCount);
+    public ReadOnlySpan<ProcessRow> Results => _results.AsSpan(0, _resultCount);
 
     private NamePattern? GetFilter(string? pattern)
     {

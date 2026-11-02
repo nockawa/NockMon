@@ -70,11 +70,16 @@ public sealed partial class CpuGridWidget : UserControl, IMonitorWidget
         _canvas.Invalidate();
     }
 
+    // Created once: a capturing lambda per frame otherwise.
+    private Func<SeriesData, string>? _formatFractionCache, _formatValueCache;
+    private Func<SeriesData, string> FormatFraction => _formatFractionCache ??= s => FormatValue(s, true);
+    private Func<SeriesData, string> FormatPlain => _formatValueCache ??= s => FormatValue(s, false);
+
     private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
         var isFraction = MetricCatalog.Get(_config.Metric).Unit == MetricUnit.Cpu;
         SmallMultiples.Draw(args.DrawingSession, new Windows.Foundation.Size(sender.ActualWidth, sender.ActualHeight), _main, _kernel.Length > 0 ? _kernel : null, _windowSamples,
-            isFraction ? 1.0 : SharedMax(), _config.Columns, MainFill, KernelFill, ActualTheme, s => FormatValue(s, isFraction), MainStroke, KernelStroke, boldText: true);
+            isFraction ? 1.0 : SharedMax(), _config.Columns, MainFill, KernelFill, ActualTheme, isFraction ? FormatFraction : FormatPlain, MainStroke, KernelStroke, boldText: true);
     }
 
     private string FormatValue(SeriesData series, bool isFraction)
