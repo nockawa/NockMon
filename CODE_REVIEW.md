@@ -34,13 +34,14 @@
 2. The crash and data-loss Mediums: M13, M15, M17–M21.
 3. The rest, by area.
 
-## Progress (2026-11-02, uncommitted on `feature/folder-widget-process-menu`)
+## Progress (2026-11-02, branch `feature/folder-widget-process-menu`)
 
 | | Items |
 |---|---|
-| **Fixed** | C1, H1–H5; every Medium except M31; L1–L4, L6, L7, L9, L10, L11, L18–L21, L23–L25, L29, L30, L31 (Low-integrity read-up blocked by the label), L35–L40, L43, L44, L51, L53, L54. |
+| **Fixed** | C1, H1–H5; every Medium except M31; every Low except those below; P1, P3, P5–P9, P13, P14, P16; A1–A6, A8–A14; T8, T9 (pipe descriptor), T10, T15; D7, D11, D13, D16 (parallel tests, x64-only pull requests), D17. Tests were added with most fixes (272 in all). |
 | **Disproved** | M11: a new elevated test shows bytes written through to disk are attributed to the writing process. Kept as a regression test. |
-| **Not done** | M31 (no mixed-DPI repro); the other Lows; P1–P16; A1–A14; the Testability and Design items, apart from the tests added with the fixes. |
+| **Accepted as is** | L45: the workspace-vs-screen offset in the off-monitor check is a taskbar's size. P2: the pool-tag sort runs once per scan, on a small row type. P11: the process events widget only formats when events arrive, and cells are assigned only when their text changes. A7: the tray tooltip string is still built each sample, but nothing reaches the shell unless it changed. |
+| **Not done** | M31, L17 and L5: need a mixed-DPI setup, a live theme switch, and more than 64 logical processors. L22, L28 and L34 (M each). P4, P10, P12, P15. T1–T7, T11–T14, T16, T17. D1–D6, D8–D10, D12, D14, D15. |
 
 **C1 / H1 decisions:**
 - Data now lives in `%ProgramData%\NockMon\<user SID>`, with an admin-only ACL checked at every start.
