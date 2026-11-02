@@ -15,7 +15,11 @@ internal static unsafe partial class BarIcon
 
     public static int SmallIconSize(nint hwnd) => GetSystemMetricsForDpi(SM_CXSMICON, Win32.GetDpiForWindow(hwnd));
 
+    /// <summary>The notification area's icon size: the taskbar follows the system DPI, not the window's monitor.</summary>
+    public static int TrayIconSize() => GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem());
+
     /// <param name="fractions">Values in 0..1, oldest first; the last (size - 2) are drawn.</param>
+    /// <returns>The icon, or 0 when GDI is out of resources.</returns>
     public static nint Create(int size, ReadOnlySpan<float> fractions)
     {
         var header = new BitmapInfoHeader
@@ -28,9 +32,15 @@ internal static unsafe partial class BarIcon
         };
         void* bits;
         var color = CreateDIBSection(0, &header, 0, &bits, 0, 0);
-        var mask = CreateBitmap(size, size, 1, 1, null);
+        // A defined (all zero) mask: the 32-bit color's alpha makes the shape. Rows are WORD-aligned.
+        var maskBits = new byte[(size + 15) / 16 * 2 * size];
+        nint mask;
+        fixed (byte* m = maskBits)
+            mask = CreateBitmap(size, size, 1, 1, m);
         try
         {
+            if (color == 0 || bits == null || mask == 0)
+                return 0;
             var pixels = new Span<uint>(bits, size * size);
             var inner = size - 2;
             for (var y = 0; y < size; y++)
@@ -54,8 +64,10 @@ internal static unsafe partial class BarIcon
         }
         finally
         {
-            DeleteObject(color);
-            DeleteObject(mask);
+            if (color != 0)
+                DeleteObject(color);
+            if (mask != 0)
+                DeleteObject(mask);
         }
     }
 
@@ -101,4 +113,7 @@ internal static unsafe partial class BarIcon
 
     [LibraryImport("user32.dll")]
     private static partial int GetSystemMetricsForDpi(int index, uint dpi);
+
+    [LibraryImport("user32.dll")]
+    private static partial uint GetDpiForSystem();
 }

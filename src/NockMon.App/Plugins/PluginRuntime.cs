@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Security.Cryptography;
+using System.Text;
 using NockMon.Core.Layout;
 using NockMon.Core.Persistence;
 using NockMon.Core.Plugins;
@@ -18,6 +20,7 @@ internal sealed class LoadedPlugin
 
     public PluginManifest? Manifest { get; init; }
     public List<IWidgetPlugin> Widgets { get; } = [];
+    public List<IMetricPlugin> MetricSources { get; } = [];
 
     /// <summary>Why it failed to load (fully or partly); null when fine.</summary>
     public string? Error { get; set; }
@@ -27,14 +30,38 @@ internal sealed class LoadedPlugin
 
 /// <summary>
 /// Loads plugins (installed ones, development folders, <c>--plugin &lt;folder&gt;</c> arguments) into one load context
-/// each, registers their widgets, and installs from feeds. Assemblies the host has (the SDK, WinUI, the runtime…)
-/// always resolve to the host's copy: plugins share its types. Nothing can be unloaded: updates, removals and reloads
+/// each, registers their widgets, and installs from feeds. The runtime, the SDK, WinUI and Win2D always resolve to the
+/// host's copy (plugins share their types); other dependencies to the plugin's own. Nothing can be unloaded: updates, removals and reloads
 /// need a restart, which <see cref="RestartRequired"/> tracks. UI thread only.
 /// </summary>
 internal static class PluginRuntime
 {
     private static readonly List<LoadedPlugin> _loaded = [];
     private static readonly Dictionary<(string Plugin, string Widget), IWidgetPlugin> _widgets = [];
+    private static readonly List<PluginMetricSource> _metricSources = [];
+
+    /// <summary>The loaded plugins' metric sources, started (API 1.1).</summary>
+    public static IReadOnlyList<Core.Metrics.IExternalMetricSource> MetricSources => _metricSources;
+
+    /// <summary>Raised (UI thread) when a plugin loaded during the session brought metric sources.</summary>
+    public static event Action? MetricSourcesChanged;
+
+    /// <summary>At exit, after the sampling engine stopped.</summary>
+    public static void DisposeMetricSources()
+    {
+        foreach (var source in _metricSources)
+        {
+            try
+            {
+                source.Plugin.Dispose();
+            }
+            catch (Exception e)
+            {
+                Debug.WriteLine($"Metric source {source.Source} failed to dispose: {e.Message}");
+            }
+        }
+        _metricSources.Clear();
+    }
 
     public static PluginStore Store { get; } = new(Path.Combine(AppPaths.Root, "Plugins"), PluginApi.Version);
 
@@ -73,20 +100,31 @@ internal static class PluginRuntime
             if (args[i] == "--plugin")
                 commandLine.Add(Path.GetFullPath(args[++i]));
         }
+        // Any program can start NockMon with --plugin: the UAC prompt alone would then load its code as administrator.
+        if (commandLine.Count > 0 && Shell.Win32.MessageBox(
+                $"Load the development plugin{(commandLine.Count > 1 ? "s" : "")} from:\n\n{string.Join("\n", commandLine)}\n\n" +
+                "Its code runs with administrator rights. Load only a folder you passed with --plugin yourself.",
+                Shell.Win32.MB_YESNO | Shell.Win32.MB_ICONWARNING) != Shell.Win32.IDYES)
+            commandLine.Clear();
         CommandLineFolders = commandLine;
+        var saved = developmentFolders.Where(f => !commandLine.Contains(f, StringComparer.OrdinalIgnoreCase)).ToList();
 
         try
         {
             Store.ApplyPending();
+            ApplySnapshots(commandLine.Concat(saved));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             Debug.WriteLine($"Plugin housekeeping failed: {e.Message}");
         }
-        CleanDevelopmentCopies();
+        CleanLegacyCopies();
 
-        foreach (var folder in commandLine.Concat(developmentFolders).Distinct(StringComparer.OrdinalIgnoreCase))
-            LoadDevelopment(folder);
+        // Command-line folders were just confirmed: snapshot them now. Saved ones load their last snapshot.
+        foreach (var folder in commandLine.Distinct(StringComparer.OrdinalIgnoreCase))
+            LoadDevelopment(folder, snapshot: true);
+        foreach (var folder in saved.Distinct(StringComparer.OrdinalIgnoreCase))
+            LoadDevelopment(folder, snapshot: false);
         foreach (var plugin in Store.List().Where(p => !p.PendingRemoval))
         {
             if (FindLoaded(plugin.Id) is { } other)
@@ -96,6 +134,23 @@ internal static class PluginRuntime
             }
             Load(plugin.Directory, developmentFolder: null);
         }
+    }
+
+    /// <summary>
+    /// The plugin whose code threw <paramref name="exception"/> (a frame of its stack, or of an inner exception's, in a
+    /// plugin's load context), or null when the host's own code did.
+    /// </summary>
+    public static string? FindCulprit(Exception exception)
+    {
+        for (var e = exception; e is not null; e = e.InnerException)
+        {
+            foreach (var frame in new StackTrace(e).GetFrames())
+            {
+                if (frame.GetMethod()?.DeclaringType?.Assembly is { } assembly && AssemblyLoadContext.GetLoadContext(assembly) is PluginLoadContext context)
+                    return context.PluginName;
+            }
+        }
+        return null;
     }
 
     public static IWidgetPlugin? Find(string plugin, string widget) =>
@@ -113,7 +168,7 @@ internal static class PluginRuntime
     public static async Task<bool> InstallAsync(PluginListing listing, CancellationToken cancellation)
     {
         await using var package = await listing.Feed.DownloadAsync(listing.Id, listing.Version, cancellation);
-        var manifest = await Task.Run(() => Store.Install(package, listing.Feed.Name), cancellation);
+        var manifest = await Task.Run(() => Store.Install(package, listing.Feed.Name, listing.Id, listing.Version), cancellation);
         if (FindLoaded(manifest.Id) is { } running)
         {
             // Same files already running (reinstall after an uninstall) need nothing; anything else waits.
@@ -125,17 +180,45 @@ internal static class PluginRuntime
         return loaded.Error is null && loaded.Widgets.Count > 0;
     }
 
-    /// <summary>Loads a development folder added from the UI. Already loaded plugin: reloaded at the next start.</summary>
-    public static LoadedPlugin LoadDevelopment(string folder)
+    /// <summary>
+    /// Loads a development folder from its snapshot: a copy in the protected data folder, taken only when the user asks
+    /// (<paramref name="snapshot"/>: adding the folder, Reload, a confirmed <c>--plugin</c>). The build folder itself is
+    /// never loaded: any non-elevated program can change it, and plugins run as administrator. Already loaded plugin:
+    /// reloaded at the next start.
+    /// </summary>
+    public static LoadedPlugin LoadDevelopment(string folder, bool snapshot)
     {
+        var copy = SnapshotFor(folder);
+        try
+        {
+            if (snapshot)
+                TakeSnapshot(folder);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            var failed = new LoadedPlugin { Directory = folder, DevelopmentFolder = folder, Error = $"Cannot copy the folder: {e.Message}" };
+            _loaded.Add(failed);
+            return failed;
+        }
+        if (!System.IO.Directory.Exists(copy))
+        {
+            var missing = new LoadedPlugin
+            {
+                Directory = folder, DevelopmentFolder = folder,
+                Error = "No snapshot of this folder yet: click Reload (Plugins, Development), then restart.",
+            };
+            _loaded.Add(missing);
+            return missing;
+        }
+
         PluginManifest manifest;
         try
         {
-            manifest = PluginManifest.Load(folder);
+            manifest = PluginManifest.Load(copy);
         }
         catch (InvalidDataException e)
         {
-            var failed = new LoadedPlugin { Directory = folder, DevelopmentFolder = folder, Error = e.Message };
+            var failed = new LoadedPlugin { Directory = copy, DevelopmentFolder = folder, Error = e.Message };
             _loaded.Add(failed);
             return failed;
         }
@@ -144,20 +227,53 @@ internal static class PluginRuntime
             _reloadPending = true;
             return running;
         }
-
-        // Load from a copy: the build can overwrite the output folder while the app runs.
-        var copy = Path.Combine(Path.GetTempPath(), "NockMon", "DevPlugins", $"{manifest.Id}-{Environment.ProcessId}-{Environment.TickCount64}");
-        try
-        {
-            CopyDirectory(folder, copy);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            var failed = new LoadedPlugin { Directory = folder, DevelopmentFolder = folder, Manifest = manifest, Error = $"Cannot copy the folder: {e.Message}" };
-            _loaded.Add(failed);
-            return failed;
-        }
         return Load(copy, folder);
+    }
+
+    /// <summary>Snapshots of development folders, in the protected data folder.</summary>
+    private static string SnapshotRoot => Path.Combine(AppPaths.Root, "DevPlugins");
+
+    /// <summary>The snapshot of a development folder: named by a hash of its full path.</summary>
+    private static string SnapshotFor(string folder) =>
+        Path.Combine(SnapshotRoot, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant())))[..16]);
+
+    /// <summary>
+    /// Copies the folder's current build (links skipped) as its snapshot: in place when nothing is loaded from the
+    /// snapshot, else beside it (".pending"), swapped in at the next start (loaded assemblies are locked).
+    /// </summary>
+    public static void TakeSnapshot(string folder)
+    {
+        var target = SnapshotFor(folder);
+        var pending = target + ".pending";
+        if (System.IO.Directory.Exists(pending))
+            System.IO.Directory.Delete(pending, recursive: true);
+        CopyDirectory(folder, pending);
+        if (_loaded.Any(l => string.Equals(l.Directory, target, StringComparison.OrdinalIgnoreCase)))
+            return;
+        if (System.IO.Directory.Exists(target))
+            System.IO.Directory.Delete(target, recursive: true);
+        System.IO.Directory.Move(pending, target);
+    }
+
+    /// <summary>Start-up, before loading: pending snapshots replace the current ones; snapshots of folders no longer listed go.</summary>
+    private static void ApplySnapshots(IEnumerable<string> folders)
+    {
+        if (!System.IO.Directory.Exists(SnapshotRoot))
+            return;
+        var kept = folders.Select(SnapshotFor).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var pending in System.IO.Directory.EnumerateDirectories(SnapshotRoot, "*.pending"))
+        {
+            var target = pending[..^".pending".Length];
+            if (System.IO.Directory.Exists(target))
+                System.IO.Directory.Delete(target, recursive: true);
+            System.IO.Directory.Move(pending, target);
+        }
+        foreach (var snapshot in System.IO.Directory.EnumerateDirectories(SnapshotRoot))
+        {
+            if (!kept.Contains(snapshot))
+                System.IO.Directory.Delete(snapshot, recursive: true);
+        }
     }
 
     private static LoadedPlugin Load(string directory, string? developmentFolder)
@@ -187,22 +303,33 @@ internal static class PluginRuntime
             var context = new PluginLoadContext(Path.Combine(directory, manifest.Assembly), manifest.Id);
             var assembly = context.LoadFromAssemblyPath(Path.Combine(directory, manifest.Assembly));
             var errors = new List<string>();
+            var sources = 0;
             foreach (var type in ExportedTypes(assembly, errors))
             {
-                if (!type.IsClass || type.IsAbstract || !typeof(IWidgetPlugin).IsAssignableFrom(type))
+                if (!type.IsClass || type.IsAbstract)
                     continue;
                 try
                 {
-                    var widget = (IWidgetPlugin)Activator.CreateInstance(type)!;
-                    Register(plugin, widget);
+                    if (typeof(IWidgetPlugin).IsAssignableFrom(type))
+                        Register(plugin, (IWidgetPlugin)Activator.CreateInstance(type)!);
+                    else if (typeof(IMetricPlugin).IsAssignableFrom(type))
+                    {
+                        var source = (IMetricPlugin)Activator.CreateInstance(type)!;
+                        source.Start(new PluginContext(manifest.Id));
+                        plugin.MetricSources.Add(source);
+                        _metricSources.Add(new PluginMetricSource(manifest.Id, source));
+                        sources++;
+                    }
                 }
                 catch (Exception e)
                 {
                     errors.Add($"{type.Name}: {(e as TargetInvocationException)?.InnerException?.Message ?? e.Message}");
                 }
             }
-            if (plugin.Widgets.Count == 0 && errors.Count == 0)
-                errors.Add($"No public {nameof(IWidgetPlugin)} implementation in {manifest.Assembly}.");
+            if (plugin.Widgets.Count == 0 && plugin.MetricSources.Count == 0 && errors.Count == 0)
+                errors.Add($"No public {nameof(IWidgetPlugin)} or {nameof(IMetricPlugin)} implementation in {manifest.Assembly}.");
+            if (sources > 0)
+                MetricSourcesChanged?.Invoke();
             plugin.Error = errors.Count > 0 ? string.Join(" ", errors) : null;
         }
         catch (Exception e) when (e is IOException or BadImageFormatException or FileLoadException)
@@ -238,18 +365,25 @@ internal static class PluginRuntime
         plugin.Widgets.Add(widget);
     }
 
+    /// <summary>Links (junctions, symbolic links) are skipped: one could pull any folder of the machine in.</summary>
     private static void CopyDirectory(string source, string target)
     {
-        foreach (var file in System.IO.Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        System.IO.Directory.CreateDirectory(target);
+        foreach (var entry in new DirectoryInfo(source).EnumerateFileSystemInfos())
         {
-            var destination = Path.Combine(target, Path.GetRelativePath(source, file));
-            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(file, destination, overwrite: true);
+            if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                continue;
+            var destination = Path.Combine(target, entry.Name);
+            if (entry is DirectoryInfo)
+                CopyDirectory(entry.FullName, destination);
+            else
+                ((FileInfo)entry).CopyTo(destination, overwrite: true);
         }
     }
 
     /// <summary>Copies left by previous sessions (locked while they ran).</summary>
-    private static void CleanDevelopmentCopies()
+    /// <summary>Copies made in %TEMP% by NockMon 1.1 (development plugins are now loaded from protected snapshots).</summary>
+    private static void CleanLegacyCopies()
     {
         var root = Path.Combine(Path.GetTempPath(), "NockMon", "DevPlugins");
         if (!System.IO.Directory.Exists(root))
@@ -269,7 +403,8 @@ internal static class PluginRuntime
 
     private static HttpClient CreateHttp()
     {
-        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        // A package is buffered whole: capped, a hostile feed cannot exhaust the elevated process's memory.
+        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60), MaxResponseContentBufferSize = 256 * 1024 * 1024 };
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"NockMon/{HostVersion.ToString(3)}");
         return http;
     }
@@ -280,11 +415,29 @@ internal static class PluginRuntime
     /// </summary>
     private sealed class PluginLoadContext(string mainAssembly, string name) : AssemblyLoadContext($"Plugin {name}")
     {
+        public string PluginName => name;
+
         private static readonly HashSet<string> HostAssemblies = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Select(Path.GetFileNameWithoutExtension)
             .OfType<string>()
+            .Where(IsShared)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Assemblies whose types plugins share with the host: the runtime, the SDK, the Windows App SDK, CsWinRT, Win2D.
+        /// The host's private dependencies (NuGet, MCP, TraceEvent…) are not: a plugin shipping its own copy gets it
+        /// (the host's version may change in any release); one that does not still falls back to the host's.
+        /// </summary>
+        private static bool IsShared(string name) =>
+            name.StartsWith("System.", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Microsoft.Win32.", StringComparison.OrdinalIgnoreCase) ||
+            name is "System" or "mscorlib" or "netstandard" or "WindowsBase" or "Microsoft.CSharp" or "Microsoft.VisualBasic" or "Microsoft.VisualBasic.Core" ||
+            name.Equals("NockMon.Sdk", StringComparison.OrdinalIgnoreCase) || name.Equals("WinRT.Runtime", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("Microsoft.WinUI", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Microsoft.Windows.", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("Microsoft.WindowsAppRuntime", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("Microsoft.InteractiveExperiences", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("Microsoft.Web.WebView2", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("Microsoft.Graphics.Canvas", StringComparison.OrdinalIgnoreCase);
 
         private readonly AssemblyDependencyResolver _resolver = new(mainAssembly);
         private readonly string _directory = Path.GetDirectoryName(mainAssembly)!;

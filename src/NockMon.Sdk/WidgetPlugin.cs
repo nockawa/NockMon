@@ -8,7 +8,7 @@ namespace NockMon.Sdk;
 public static class PluginApi
 {
     /// <summary>Major.minor of the API this host implements.</summary>
-    public static Version Version { get; } = new(1, 0);
+    public static Version Version { get; } = new(1, 1);
 }
 
 /// <summary>Widget size in board cells.</summary>

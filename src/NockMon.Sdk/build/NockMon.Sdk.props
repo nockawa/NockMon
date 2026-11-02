@@ -3,7 +3,7 @@
   <!-- Defaults making the referencing project a NockMon plugin. The project may override any of them. -->
   <PropertyGroup>
     <!-- Plugin API version this SDK implements (PluginApi.Version): checked by the host at load. -->
-    <NockMonPluginApiVersion>1.0</NockMonPluginApiVersion>
+    <NockMonPluginApiVersion>1.1</NockMonPluginApiVersion>
 
     <PackageType Condition="'$(PackageType)' == ''">NockMonPlugin</PackageType>
     <!-- Dependencies are copied next to the plugin and resolved by its own load context. -->

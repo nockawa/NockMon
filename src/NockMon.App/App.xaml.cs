@@ -16,6 +16,7 @@ public partial class App : Application
     private EtwKernelMonitor? _events;
     private SamplingEngine? _engine;
     private GpuProbe? _gpu;
+    private DriveTemperatureSource? _drives;
 
     public App()
     {
@@ -40,6 +41,14 @@ public partial class App : Application
         UnhandledException += (_, e) =>
         {
             LogCrash(e.Exception);
+            // A plugin's own event handler or dispatcher callback (its widget calls are guarded already): the plugin is
+            // at fault, not the app's state. Anything else ends the app.
+            if (Plugins.PluginRuntime.FindCulprit(e.Exception) is { } plugin && _window is MainWindow window)
+            {
+                e.Handled = true;
+                window.ReportPluginFault(plugin, e.Exception);
+                return;
+            }
             _events.Dispose();
         };
         _gpu = new GpuProbe();
@@ -47,6 +56,11 @@ public partial class App : Application
         var monitor = new MonitorService(_engine, DispatcherQueue.GetForCurrentThread(), settings.CpuScale);
         // Before the window: layouts referencing plugin widgets find them registered.
         Plugins.PluginRuntime.Initialize(settings.DevPluginFolders, Environment.GetCommandLineArgs());
+        // Built-in external sources (drive temperatures), then the plugins'.
+        _drives = new DriveTemperatureSource();
+        _drives.Start();
+        _engine.SetExternalSources([_drives, .. Plugins.PluginRuntime.MetricSources]);
+        Plugins.PluginRuntime.MetricSourcesChanged += () => _engine.SetExternalSources([_drives, .. Plugins.PluginRuntime.MetricSources]);
 
         _window = new MainWindow(session, monitor);
         _window.Closed += (_, _) => Shutdown();
@@ -69,6 +83,8 @@ public partial class App : Application
     private void Shutdown()
     {
         _engine?.Dispose();
+        Plugins.PluginRuntime.DisposeMetricSources(); // After the engine: it reads them until it stops.
+        _drives?.Dispose();
         _events?.Dispose(); // Stops the kernel session: it would otherwise outlive the process.
         _gpu?.Dispose();
         _probe?.Dispose();

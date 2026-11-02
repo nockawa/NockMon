@@ -53,7 +53,19 @@ internal sealed unsafe partial class ProcessorPerformanceCounters : IDisposable
         }
         _last.CopyTo(perCpu);
         uint returned;
-        if (NtDll.NtQuerySystemInformation(SystemProcessorPerformanceDistribution, _current, _length, &returned) < 0)
+        var status = NtDll.NtQuerySystemInformation(SystemProcessorPerformanceDistribution, _current, _length, &returned);
+        if (status == NtDll.STATUS_INFO_LENGTH_MISMATCH && returned > _length)
+        {
+            // Many logical processors × P-states: grow both buffers (25 % headroom); the delta restarts from here.
+            _length = returned + returned / 4;
+            NativeMemory.Free(_current);
+            NativeMemory.Free(_previous);
+            _current = (byte*)NativeMemory.Alloc(_length);
+            _previous = (byte*)NativeMemory.Alloc(_length);
+            _hasPrevious = false;
+            status = NtDll.NtQuerySystemInformation(SystemProcessorPerformanceDistribution, _current, _length, &returned);
+        }
+        if (status < 0)
             return double.NaN;
 
         if (_hasPrevious)

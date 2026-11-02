@@ -162,7 +162,9 @@ public class EtwIntegrationTests
             Thread.Sleep(1500); // Session startup.
             using (var p = Process.Start(new ProcessStartInfo("cmd.exe", "/c echo nockmon-etw-test") { UseShellExecute = false, CreateNoWindow = true })!)
                 p.WaitForExit();
-            File.WriteAllBytes(Path.Combine(Path.GetTempPath(), "nockmon-etw.bin"), new byte[1 << 20]);
+            var file = Path.Combine(Path.GetTempPath(), $"nockmon-etw-{Guid.NewGuid():N}.bin");
+            File.WriteAllBytes(file, new byte[1 << 20]);
+            File.Delete(file);
             Thread.Sleep(2500); // Real-time buffers flush about every second.
 
             monitor.HarvestSample(out var totals);
@@ -179,6 +181,46 @@ public class EtwIntegrationTests
             Assert.DoesNotContain(drivers, d => d.Name == "unknown" && d.DpcCount > totals.DpcCount / 2);
         }
         Assert.Null(TraceEventSession.GetActiveSession(TestSession));
+    }
+
+    /// <summary>Disk bytes go to the process that did the I/O (write-through: not deferred to the system's lazy writer).</summary>
+    [Fact]
+    public void DiskIo_IsAttributedToTheWritingProcess()
+    {
+        if (!Environment.IsPrivilegedProcess)
+            Assert.Skip("Kernel ETW sessions need elevation.");
+        const string name = TestSession + "-Disk";
+        var path = Path.Combine(Path.GetTempPath(), $"nockmon-etw-{Guid.NewGuid():N}.bin");
+        try
+        {
+            using var monitor = new EtwKernelMonitor(name);
+            monitor.Start();
+            Assert.Null(monitor.Status);
+            var io = new Dictionary<int, ProcessIoTotals>();
+            var drivers = new List<DriverTotals>();
+            Thread.Sleep(1500); // Session startup.
+            monitor.HarvestScan(io, drivers);
+
+            using (var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            {
+                var block = new byte[256 * 1024];
+                for (var i = 0; i < 16; i++)
+                    file.Write(block);
+            }
+            var own = 0L;
+            for (var i = 0; i < 20 && own < 4 << 20; i++)
+            {
+                Thread.Sleep(250); // Real-time buffers flush about every second.
+                io.Clear();
+                monitor.HarvestScan(io, drivers);
+                own += io.GetValueOrDefault(Environment.ProcessId).DiskWriteBytes;
+            }
+            Assert.True(own >= 4 << 20, $"Only {own} bytes written attributed to this process (pid {Environment.ProcessId}).");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     /// <summary>
@@ -219,5 +261,18 @@ public class EtwIntegrationTests
         map.Refresh();
         Assert.True(map.Count > 50);
         Assert.Equal("unknown", map.Resolve(1));
+
+        var modules = map.Current;
+        var kernel = Array.FindIndex(modules.Names, n => n.Equals("ntoskrnl.exe", StringComparison.OrdinalIgnoreCase));
+        Assert.True(kernel >= 0, string.Join(", ", modules.Names.Take(5)));
+        Assert.True(modules.Sizes[kernel] > 1 << 20);
+        Assert.Equal("ntoskrnl.exe", map.Resolve(modules.Bases[kernel] + 0x1000), ignoreCase: true);
+        // Past the end of the last image: no driver there.
+        var last = modules.Bases.Length - 1;
+        Assert.Equal("unknown", map.Resolve(modules.Bases[last] + modules.Sizes[last] + 0x1000));
+        Assert.All(modules.Names, n => Assert.DoesNotContain(@"\", n)); // File names, not paths.
+
+        map.Refresh(); // Unchanged: the same snapshot is kept.
+        Assert.Same(modules, map.Current);
     }
 }

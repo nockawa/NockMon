@@ -104,6 +104,7 @@ Charts, values and value lists show *series*. A series is a metric of a source:
 | **Logical CPU** | one logical processor, by index | usage, kernel time, frequency of CPU 5 |
 | **Processes** | every process whose image name matches a pattern, summed | CPU of `chrome`, working set of `devenv;msbuild` |
 | **Kernel object** | an object type | `Token` objects, `File` handles |
+| **Sensors and plugins** | a group, then a metric | Drive temperatures (built in), and the metrics of plugins such as [Hardware sensors](../samples/HardwareSensors.NockMon): CPU and motherboard temperatures, fans, voltages |
 | **GPU** | an adapter | utilization, an engine (`Compute*`), dedicated memory, temperature |
 
 All series of a chart must share a unit (you can't mix bytes and percents). A chart can be **stacked**, for parts of a
@@ -204,7 +205,11 @@ that time.
 
 ## Files
 
-Everything lives in `%LOCALAPPDATA%\NockMon`:
+Everything lives in `%ProgramData%\NockMon\<your user SID>`, a folder only administrators can change (NockMon runs
+as administrator: a folder your other programs could write would let them plant code it then runs). Edit these files
+from an elevated editor. Up to 1.1 they lived in `%LOCALAPPDATA%\NockMon`: 1.2 copies them over at first start and
+renames the old folder `NockMon (moved to ProgramData)`. If `%ProgramData%\NockMon` exists but NockMon did not create it,
+NockMon moves it aside (`NockMon.untrusted-<date>`), starts with a new one, and tells you.
 
 | Path | Contents |
 |---|---|
@@ -215,5 +220,5 @@ Everything lives in `%LOCALAPPDATA%\NockMon`:
 
 Files are written atomically (a crash never leaves a truncated file). The history is kept in memory only.
 
-The environment variable `NOCKMON_DATA_DIR` points NockMon at another folder: handy for testing layouts or keeping
-separate profiles.
+The environment variable `NOCKMON_DATA_DIR` points a Debug build (or a non-elevated one) at another folder: handy for
+testing layouts or keeping separate profiles. Release builds running elevated ignore it, since any program could set it.

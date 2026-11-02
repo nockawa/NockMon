@@ -112,6 +112,46 @@ public class HistoryStoreTests
     }
 
     [Fact]
+    public void ShortReads_MatchTheTailOfAFullRead_AndFollowNewNames()
+    {
+        var h = new HistoryStore(64, 16, 1);
+        var random = new Random(7);
+        for (var i = 0; i < 100; i++)
+            Tick(h, i % 3 == 0 ? Table(("a.exe", random.Next(10)), ("ab.exe", random.Next(10)), ("b.exe", 1)) : null);
+        var series = new ProcessSeries(ProcessField.Cpu, "a*");
+        var full = Read(h, series, 64);
+        foreach (var n in new[] { 1, 2, 3, 5, 17, 40 })
+            Assert.Equal(full[^n..], Read(h, series, n)); // Only the scans covering the window are summed.
+
+        Tick(h, Table(("a.exe", 1), ("ab.exe", 1), ("ac.exe", 5))); // A new matching name: the cached match updates.
+        Assert.Equal(7f, Read(h, series, 1)[0]);
+    }
+
+    [Fact]
+    public void SparseRing_AllocatesOnlyWrittenPages_AndCopiesAcrossTheWrap()
+    {
+        var ring = new SparseRing(150); // Pages of 64: the last one partial.
+        Assert.Equal(0, ring.PageCount);
+        ring.Add(3, 0); // Zero: nothing allocated.
+        Assert.Equal(0, ring.PageCount);
+        ring.Add(149, 2);
+        ring.Add(0, 1);
+        ring.Add(0, 1);
+        Assert.Equal(2, ring.PageCount);
+        Assert.Equal(2f, ring[0]);
+        Assert.Equal(0f, ring[70]);
+
+        var latest = new float[3];
+        ring.CopyLatest(151, latest); // Slots 148, 149, 0.
+        Assert.Equal([0f, 2f, 2f], latest);
+        ring.Clear(0);
+        Assert.Equal(0f, ring[0]);
+        var all = new float[150];
+        ring.CopyLatest(150, all);
+        Assert.Equal(2f, all.Sum());
+    }
+
+    [Fact]
     public void NameSeries_EvictedAfterAFullScanWindowAbsent()
     {
         var h = new HistoryStore(16, 3, 1);

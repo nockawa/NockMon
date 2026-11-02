@@ -11,8 +11,9 @@ namespace NockMon.Core.Agents;
 public sealed record MetricEntry(string Id, string Name, string Unit, string? Target, bool History, string Summary);
 
 /// <summary>
-/// Agent-facing metric ids: "system.Cpu", "core.Usage", "process.WorkingSet", "gpu.Temperature", "objectType.Handles",
-/// plus current-value-only scopes "driver.*" and "poolTag.*" (kernel tables). Case-insensitive.
+/// Agent-facing metric ids: "system.Cpu", "core.Usage", "process.WorkingSet", "gpu.Temperature", "objectType.Handles", "folder.Size",
+/// plugins' metrics "plugin.&lt;plugin&gt;/&lt;source&gt;/&lt;metric id&gt;", plus current-value-only scopes "driver.*" and "poolTag.*"
+/// (kernel tables). Case-insensitive, except a plugin's metric id.
 /// </summary>
 public static class MetricIds
 {
@@ -20,6 +21,7 @@ public static class MetricIds
     public const string CoreTarget = "logical processor index (0-based)";
     public const string GpuTarget = "GPU adapter name (see get_overview); optional with a single GPU";
     public const string ObjectTypeTarget = "kernel object type name (\"File\", \"Token\", \"Event\"…)";
+    public const string FolderTarget = "path of a folder watched by a Folder size widget or a folder series (only watched folders are recorded)";
 
     /// <summary>Every id, in catalog order. GPU engines are excluded: they are only polled for the widgets showing them.</summary>
     public static IEnumerable<MetricEntry> All()
@@ -35,6 +37,14 @@ public static class MetricIds
         foreach (var m in Enum.GetValues<ObjectTypeMetric>())
             yield return Entry($"objectType.{m}", new MetricInfo($"Kernel objects: {m.ToString().ToLowerInvariant()}", m.ToString(), MetricUnit.Count, true),
                 ObjectTypeTarget, Docs.Of(m));
+        foreach (var m in Enum.GetValues<FolderMetric>())
+            yield return Entry($"folder.{m}", Folders.FolderScope.Info(m), FolderTarget, Docs.Of(m));
+        foreach (var source in ExternalMetricCatalog.Sources)
+        {
+            foreach (var m in source.Metrics)
+                yield return new MetricEntry(PluginId(source.Plugin, source.Source, m.Id), $"{m.Name} ({m.Group})", AgentUnits.Label(m.Unit), null, true,
+                    $"From the {source.DisplayName} plugin.");
+        }
         foreach (var f in Enum.GetValues<DriverField>().Where(f => f != DriverField.Name))
             yield return new MetricEntry($"driver.{f}", Docs.Of(f).Title, f.ToString().EndsWith("Rate", StringComparison.Ordinal) ? "/s" : "ms",
                 null, false, Docs.Of(f).Summary);
@@ -43,12 +53,34 @@ public static class MetricIds
                 : f.ToString().EndsWith("Growth", StringComparison.Ordinal) ? "KB/s" : "MB", null, false, Docs.Of(f).Summary);
     }
 
+    public static string PluginId(string plugin, string source, string metric) => $"plugin.{plugin}/{source}/{metric}";
+
+    /// <summary>"plugin.&lt;plugin&gt;/&lt;source&gt;/&lt;metric&gt;": the metric id may hold slashes itself.</summary>
+    private static PluginSeries ParsePlugin(string id)
+    {
+        var rest = id["plugin.".Length..];
+        var first = rest.IndexOf('/');
+        var second = first < 0 ? -1 : rest.IndexOf('/', first + 1);
+        if (first <= 0 || second <= first + 1 || second == rest.Length - 1)
+            throw Unknown(id);
+        var series = new PluginSeries(rest[..first], rest[(first + 1)..second], rest[(second + 1)..]);
+        if (ExternalMetricCatalog.Find(series.Plugin, series.Source, series.Metric) is null)
+            throw new AgentException($"Unknown plugin metric '{id}' (is the plugin loaded?). list_metrics lists them.");
+        return series;
+    }
+
     private static MetricEntry Entry(string id, MetricInfo info, string? target, Doc doc) =>
         new(id, info.DisplayName, AgentUnits.Label(info.Unit), target, info.HasHistory, doc.Summary);
 
     /// <summary>Full documentation of a metric id (title, summary, details in light markdown).</summary>
     public static Doc Describe(string id)
     {
+        if (id.StartsWith("plugin.", StringComparison.OrdinalIgnoreCase))
+        {
+            var plugin = ParsePlugin(id);
+            var metric = ExternalMetricCatalog.Find(plugin.Plugin, plugin.Source, plugin.Metric)!;
+            return new Doc(metric.Name, $"{metric.Group}, from the {plugin.Plugin} plugin ({AgentUnits.Label(metric.Unit)}).", "");
+        }
         var (scope, name) = Split(id);
         return scope switch
         {
@@ -57,6 +89,7 @@ public static class MetricIds
             "process" => Docs.Of(Parse<ProcessField>(id, name)),
             "gpu" => Docs.Of(Parse<GpuMetric>(id, name)),
             "objecttype" => Docs.Of(Parse<ObjectTypeMetric>(id, name)),
+            "folder" => Docs.Of(Parse<FolderMetric>(id, name)),
             "driver" => Docs.Of(Parse<DriverField>(id, name)),
             "pooltag" => Docs.Of(Parse<PoolTagField>(id, name)),
             _ => throw Unknown(id),
@@ -65,8 +98,12 @@ public static class MetricIds
 
     /// <summary>The history series of <paramref name="id"/> applied to <paramref name="target"/>.</summary>
     /// <param name="gpuAdapters">Known adapter names (resolves an omitted or partial GPU target).</param>
-    public static SeriesRef ToSeries(string id, string? target, IReadOnlyList<string> gpuAdapters, int logicalProcessors)
+    /// <param name="folders">Watched folders (a folder target resolves to one of them, with its scan options).</param>
+    public static SeriesRef ToSeries(string id, string? target, IReadOnlyList<string> gpuAdapters, int logicalProcessors,
+        IReadOnlyList<Folders.FolderScope>? folders = null)
     {
+        if (id.StartsWith("plugin.", StringComparison.OrdinalIgnoreCase))
+            return ParsePlugin(id);
         var (scope, name) = Split(id);
         switch (scope)
         {
@@ -95,12 +132,24 @@ public static class MetricIds
                 if (string.IsNullOrWhiteSpace(target))
                     throw new AgentException($"{id} needs a target: {ObjectTypeTarget}.");
                 return new ObjectTypeSeries(target.Trim(), objects);
+            case "folder":
+                var folderMetric = Parse<FolderMetric>(id, name);
+                folders ??= [];
+                if (string.IsNullOrWhiteSpace(target))
+                    throw new AgentException($"{id} needs a target: {FolderTarget}. Watched: {WatchedFolders(folders)}.");
+                var watched = folders.FirstOrDefault(f => f.IsPath(target))
+                    ?? throw new AgentException($"'{target}' is not watched, so it has no history. Watched: {WatchedFolders(folders)}. " +
+                                                "Add a Folder size widget (or a folder series) for it to start recording.");
+                return new FolderSeries(folderMetric, watched.Path, watched.Recursive, watched.Include, watched.Exclude, watched.SizeOnDisk);
             case "driver" or "pooltag":
                 throw new AgentException($"{id} has no history: use get_kernel_activity for current values.");
             default:
                 throw Unknown(id);
         }
     }
+
+    private static string WatchedFolders(IReadOnlyList<Folders.FolderScope> folders) =>
+        folders.Count == 0 ? "none" : string.Join(", ", folders.Select(f => f.Path).Distinct(StringComparer.OrdinalIgnoreCase));
 
     private static string ResolveAdapter(string id, string? target, IReadOnlyList<string> adapters)
     {

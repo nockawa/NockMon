@@ -165,7 +165,7 @@ public static partial class NewsFeeds
     private static string FirstSentence(string s)
     {
         const int max = 200;
-        var dot = s.IndexOf(". ", 20, StringComparison.Ordinal);
+        var dot = s.Length > 20 ? s.IndexOf(". ", 20, StringComparison.Ordinal) : -1; // A short text is one sentence.
         if (dot > 0 && dot < max)
             return s[..(dot + 1)];
         return s.Length > max ? s[..(max - 1)].TrimEnd() + "…" : s;

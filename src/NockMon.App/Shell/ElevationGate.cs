@@ -11,7 +11,6 @@ namespace NockMon.Shell;
 /// </summary>
 internal static partial class ElevationGate
 {
-    private const uint MB_YESNO = 0x4, MB_ICONWARNING = 0x30, IDYES = 6;
     private const int ERROR_CANCELLED = 1223;
 
     public static bool IsElevated
@@ -34,17 +33,17 @@ internal static partial class ElevationGate
             return true;
 #endif
 
-        var answer = MessageBoxW(0,
-            "NockMon needs administrator rights (kernel tracing, full process access).\n\nRelaunch elevated?",
-            "NockMon", MB_YESNO | MB_ICONWARNING);
-        if (answer != IDYES)
+        var answer = Win32.MessageBox("NockMon needs administrator rights (kernel tracing, full process access).\n\nRelaunch elevated?",
+            Win32.MB_YESNO | Win32.MB_ICONWARNING);
+        if (answer != Win32.IDYES)
             return false;
 
         var psi = new ProcessStartInfo(Environment.ProcessPath!)
         {
             UseShellExecute = true,
             Verb = "runas",
-            WorkingDirectory = Environment.CurrentDirectory,
+            // Not the caller's folder: the current directory is a DLL search location, and the caller may be anywhere.
+            WorkingDirectory = AppContext.BaseDirectory,
         };
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
@@ -59,7 +58,4 @@ internal static partial class ElevationGate
         }
         return false;
     }
-
-    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
-    private static partial uint MessageBoxW(nint hWnd, string text, string caption, uint type);
 }

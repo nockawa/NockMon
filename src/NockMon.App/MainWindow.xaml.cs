@@ -49,19 +49,36 @@ public sealed partial class MainWindow : Window
             AppWindow.Resize(new SizeInt32((int)(1400 * scale), (int)(860 * scale)));
         }
         AppWindow.Closing += OnClosing;
+        AppWindow.Changed += OnAppWindowChanged;
 
         // Static bar icon for the window/taskbar; the tray icon is live.
         var size = BarIcon.SmallIconSize(_hwnd);
         var windowIcon = BarIcon.Create(size, [0.3f, 0.5f, 0.4f, 0.7f, 0.6f, 0.9f, 0.5f, 0.8f, 0.6f, 0.4f, 0.7f, 1f, 0.8f, 0.6f]);
         AppWindow.SetIcon(Microsoft.UI.Win32Interop.GetIconIdFromIcon(windowIcon));
-        _tray = new TrayIcon(_hwnd, BarIcon.Create(size, []), "NockMon");
+        _tray = new TrayIcon(_hwnd, BarIcon.Create(BarIcon.TrayIconSize(), []), "NockMon");
         _tray.Activated += ShowFromTray;
         _tray.MenuRequested += OnTrayMenu;
-        Closed += (_, _) => _tray.Dispose();
-        SingleInstance.Listen(_hwnd, ShowFromTray);
+        Closed += (_, _) =>
+        {
+            _monitor.Updated -= OnMonitorUpdated; // First: a queued tick must not reach the disposed tray.
+            _tray.Dispose();
+            if (windowIcon != 0)
+                TrayIcon.DestroyIcon(windowIcon);
+        };
+        if (Core.Persistence.AppPaths.StartupWarning is { } warning)
+            ShowInfo(InfoBarSeverity.Warning, "Data folder", warning);
+        else
+            SuggestSensors();
+        SingleInstance.Listen(_hwnd, ShowFromTray, Exit, () =>
+        {
+            SavePlacement(); // Windows ends the process without closing the window.
+            _session.SaveSettings();
+        });
         SetAlwaysOnTop(session.Settings.AlwaysOnTop);
 
         Plugins.PluginWidgetView.OpenPluginsRequested += () => OpenPlugins(0);
+        Widgets.ProcessMenu.ChartRequested += AddProcessChart;
+        Widgets.ProcessMenu.MessageRaised += ShowInfo;
         SetUpTabs();
         SetUpAgents();
 
@@ -118,6 +135,7 @@ public sealed partial class MainWindow : Window
     {
         _monitor.Engine.SetWatchedPatterns(LayoutPatterns.Watched(_session.Current));
         _monitor.Engine.SetWatchedGpuEngines(LayoutPatterns.GpuEngines(_session.Current, _monitor.Engine.GpuAdapters));
+        _monitor.Engine.SetWatchedFolders(LayoutPatterns.Folders(_session.Current));
     }
 
     private static void SelectByTag(ComboBox picker, int value) =>
@@ -151,12 +169,27 @@ public sealed partial class MainWindow : Window
     private void OnMonitorUpdated()
     {
         UpdateTray();
-        if (!AppWindow.IsVisible)
-            return; // Hidden to the tray: only the tray icon is fed.
+        if (!AppWindow.IsVisible || IsMinimized)
+            return; // Hidden to the tray or minimized: only the tray icon is fed.
 
         Board.RefreshWidgets();
         UpdateEtwInfo();
     }
+
+    private bool IsMinimized => AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter { State: Microsoft.UI.Windowing.OverlappedPresenterState.Minimized };
+
+    /// <summary>Restored from minimized: the widgets were not refreshed meanwhile.</summary>
+    private void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
+    {
+        if (args.DidPresenterChange || args.DidSizeChange)
+        {
+            if (sender.IsVisible && !IsMinimized && _wasMinimized)
+                OnMonitorUpdated();
+            _wasMinimized = IsMinimized;
+        }
+    }
+
+    private bool _wasMinimized;
 
     private string? _etwStatusShown;
     private long _etwLostShown;
@@ -207,7 +240,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdateTray()
     {
-        var size = BarIcon.SmallIconSize(_hwnd);
+        var size = BarIcon.TrayIconSize();
         var (count, cpu, used, total) = _monitor.Engine.Read((buffer: _trayHistory, size: size - 2), static (state, s, h) =>
         {
             var n = h.Read(new SystemSeries(SystemMetric.Cpu), state.buffer.AsSpan(0, Math.Min(state.size, state.buffer.Length)));
@@ -220,8 +253,28 @@ public sealed partial class MainWindow : Window
 
         var tip = string.Create(CultureInfo.CurrentCulture,
             $"NockMon\nCPU {_monitor.Format(cpu, MetricUnit.Cpu)}\nRAM {MetricFormatter.FormatBytes(used)} / {MetricFormatter.FormatBytes(total)}");
-        _tray.Update(BarIcon.Create(size, history), tip);
+        // Unchanged pixels and tooltip (the usual case on an idle machine): no new icon, no cross-process call.
+        var inner = size - 2;
+        var shown = history.Length > inner ? history[^inner..] : history;
+        if (_trayHeights.Length != inner)
+            _trayHeights = new byte[inner];
+        var changed = tip != _trayTip;
+        for (var i = 0; i < inner; i++)
+        {
+            var height = i < shown.Length ? (byte)MathF.Round(Math.Clamp(shown[i], 0, 1) * inner) : (byte)0;
+            changed |= height != _trayHeights[i];
+            _trayHeights[i] = height;
+        }
+        if (!changed)
+            return;
+        if (BarIcon.Create(size, history) is var icon && icon == 0)
+            return; // Out of GDI resources: keep the current icon.
+        _trayTip = tip;
+        _tray.Update(icon, tip);
     }
+
+    private byte[] _trayHeights = [];
+    private string? _trayTip;
 
     private void OnClosing(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
     {
@@ -311,10 +364,14 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void SetCompact(bool compact)
     {
-        if (_session.IsEditing || compact == _compact)
+        // Editing needs the toolbar (Done/Cancel): no entering compact mode then, but leaving it is always possible.
+        if (compact == _compact || (compact && _session.IsEditing))
             return;
         SavePlacement();
         _compact = compact;
+        // A double-click toggles the mode on its second press, which started a drag: the window then moves or resizes
+        // under the cursor and the release never reaches the board.
+        EndCompactDrag();
         Toolbar.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         Info.IsOpen = false;
         UpdateRail();
@@ -354,6 +411,11 @@ public sealed partial class MainWindow : Window
     {
         if (_compactDrag is not { } drag || !Win32.GetCursorPos(out var cursor))
             return;
+        if (!_compact || !e.GetCurrentPoint(Board).Properties.IsLeftButtonPressed)
+        {
+            EndCompactDrag(); // The release was missed (outside the window, or lost to a mode change).
+            return;
+        }
         int dx = cursor.X - drag.Cursor.X, dy = cursor.Y - drag.Cursor.Y;
         if (Math.Abs(dx) + Math.Abs(dy) < 4 && AppWindow.Position == drag.Window)
             return; // Below the drag threshold: still a click.
@@ -362,7 +424,9 @@ public sealed partial class MainWindow : Window
         AppWindow.Move(new PointInt32(drag.Window.X + dx, drag.Window.Y + dy));
     }
 
-    private void OnBoardPointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    private void OnBoardPointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => EndCompactDrag();
+
+    private void EndCompactDrag()
     {
         if (_compactDrag is null)
             return;
@@ -586,11 +650,19 @@ public sealed partial class MainWindow : Window
 
     private async void DeleteTab(int index)
     {
-        var page = _session.Current.Pages[index];
+        var layout = _session.Current;
+        var page = layout.Pages[index];
         var count = page.Widgets.Count;
         if (count > 0 && !await Dialogs.ConfirmAsync(Content.XamlRoot, "Delete tab",
                 $"Delete '{page.Name}' and its {count} widget{(count == 1 ? "" : "s")}?", "Delete"))
             return;
+        // An AI agent may have changed the tabs (or the layout) while the question was open: delete the confirmed tab.
+        index = _session.Current == layout ? layout.Pages.IndexOf(page) : -1;
+        if (index < 0)
+        {
+            ShowInfo(InfoBarSeverity.Warning, "Delete tab", $"'{page.Name}' changed meanwhile: nothing was deleted.");
+            return;
+        }
         ChangePages(() => LayoutPages.Remove(_session.Current, index), rebuild: true);
     }
 
@@ -669,14 +741,16 @@ public sealed partial class MainWindow : Window
 
     private bool _pluginsOpen;
 
-    private async void OpenPlugins(int tab)
+    private async void OpenPlugins(int tab) => await OpenPluginsAsync(tab, null);
+
+    private async Task OpenPluginsAsync(int tab, string? search)
     {
         if (_pluginsOpen)
             return;
         _pluginsOpen = true;
         try
         {
-            if (await Plugins.PluginsDialog.ShowAsync(Content.XamlRoot, _session, Restart, tab))
+            if (await Plugins.PluginsDialog.ShowAsync(Content.XamlRoot, _session, Restart, tab, search))
                 Board.Rebuild(); // Placeholders of newly loaded plugins become widgets.
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
@@ -736,6 +810,31 @@ public sealed partial class MainWindow : Window
         UpdateWatchedPatterns();
     }
 
+    /// <summary>A chart of one metric of every process of a name (process menu), at the first free spot; kept in the layout.</summary>
+    private void AddProcessChart(string name, Core.Metrics.ProcessField field)
+    {
+        var bounds = Board.PlacementBounds;
+        var spot = BoardRules.FindFreeSpot(_session.Current.Widgets, WidgetCatalog.DefaultSize(WidgetKind.Chart), bounds.Columns, bounds.Rows)
+                   ?? BoardRules.FindFreeSpot(_session.Current.Widgets, WidgetCatalog.MinSize(WidgetKind.Chart), bounds.Columns, bounds.Rows);
+        if (spot is null)
+        {
+            ShowInfo(InfoBarSeverity.Warning, "No free space", "No room for a chart in the visible board. Enlarge the window or make room.");
+            return;
+        }
+        var info = Core.Metrics.MetricCatalog.Get(field);
+        var title = $"{Path.GetFileNameWithoutExtension(name)} {info.ShortName}";
+        _session.Current.Widgets.Add(new ChartWidgetConfig
+        {
+            Title = title,
+            Bounds = spot.Value,
+            Series = [new ChartSeriesConfig { Source = new Core.Metrics.ProcessSeries(field, name) }],
+        });
+        Board.Rebuild();
+        UpdateWatchedPatterns();
+        Run(_session.SaveCurrent);
+        ShowInfo(InfoBarSeverity.Success, "Chart added", $"'{title}': {info.DisplayName} of every {name} process. Its history starts now.");
+    }
+
     /// <summary>Copy of a widget (same settings and size) at the first free spot of the visible board.</summary>
     private void CloneWidget(WidgetConfig config)
     {
@@ -786,8 +885,11 @@ public sealed partial class MainWindow : Window
 
     private async void OnDeleteLayoutClick(object sender, RoutedEventArgs e)
     {
-        if (await Dialogs.ConfirmAsync(Content.XamlRoot, "Delete layout", $"Delete layout '{_session.Current.Name}'? This cannot be undone.", "Delete"))
-            Run(_session.Delete);
+        // By name: an AI agent may switch layouts while the question is open, and the confirmed one must be deleted.
+        var name = _session.Current.Name;
+        if (await Dialogs.ConfirmAsync(Content.XamlRoot, "Delete layout", $"Delete layout '{name}'? This cannot be undone.", "Delete") &&
+            Run(() => _session.Delete(name)))
+            RefreshPicker();
     }
 
     // --- Helpers ----------------------------------------------------------------------------------
@@ -808,8 +910,31 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>An exception from a plugin's own callback, contained by the app.</summary>
+    internal void ReportPluginFault(string plugin, Exception exception) =>
+        ShowInfo(InfoBarSeverity.Error, $"Plugin {plugin}", $"{exception.GetType().Name}: {exception.Message} (details in crash.log)");
+
+    /// <summary>Once: the first-party sensors plugin, if not installed (temperatures are what many expect of a monitor).</summary>
+    private void SuggestSensors()
+    {
+        var id = Core.Plugins.FirstPartyPlugins.HardwareSensors;
+        if (_session.Settings.SensorsSuggested || Plugins.PluginRuntime.FindLoaded(id) is not null || Plugins.PluginRuntime.Store.Find(id) is not null)
+            return;
+        _session.Settings.SensorsSuggested = true;
+        _session.SaveSettings();
+        var show = new Button { Content = "Plugins…" };
+        show.Click += (_, _) =>
+        {
+            Info.IsOpen = false;
+            _ = OpenPluginsAsync(0, id);
+        };
+        ShowInfo(InfoBarSeverity.Informational, "Hardware sensors", Core.Plugins.FirstPartyPlugins.HardwareSensorsPitch + " Install it from the Plugins dialog.");
+        Info.ActionButton = show;
+    }
+
     private void ShowInfo(InfoBarSeverity severity, string title, string message)
     {
+        Info.ActionButton = null; // Only the message that set one keeps it.
         Info.Severity = severity;
         Info.Title = title;
         Info.Message = message;

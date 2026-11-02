@@ -11,9 +11,11 @@ public sealed partial class MainWindow
 {
     /// <summary>
     /// How agents start the relay: "nockmon" when it is on PATH (dotnet tool, installer), otherwise this executable
-    /// (single-file build, or an install without the PATH option).
+    /// (an install without the PATH option). Probed when first shown: PATH may hold slow (network) folders.
     /// </summary>
-    private static readonly string RelayCommand = IsOnPath("nockmon") ? "nockmon" : Quote(Environment.ProcessPath!);
+    private static string RelayCommand => _relayCommand ??= IsOnPath("nockmon") ? "nockmon" : Quote(Environment.ProcessPath!);
+
+    private static string? _relayCommand;
 
     private static string AgentCommand => $"claude mcp add nockmon -- {RelayCommand} mcp";
 
@@ -132,6 +134,7 @@ public sealed partial class MainWindow
 
         public void AgentEditStarted(string client)
         {
+            window.SetCompact(false); // Compact mode hides Done/Cancel: the user could not end the agent's session.
             window.SetEditing(true);
             window.ShowInfo(InfoBarSeverity.Informational, $"{client} is editing this layout",
                 "Its changes show live. Review them, then Done keeps them, Cancel discards them.");
@@ -150,9 +153,9 @@ public sealed partial class MainWindow
             window.ShowFromTray(); // The question needs the window.
             try
             {
-                return await Shell.Dialogs.ConfirmAsync(window.Content.XamlRoot, title, message, accept);
+                return await Shell.Dialogs.ConfirmAsync(window.Content.XamlRoot, title, message, accept, busyThrows: true);
             }
-            catch (Exception e) when (e is InvalidOperationException or System.Runtime.InteropServices.COMException)
+            catch (Exception e) when (Shell.Dialogs.IsBusy(e))
             {
                 throw new AgentException("NockMon has a dialog open: ask the user to close it, then retry.");
             }

@@ -34,7 +34,8 @@ public sealed record PluginManifest(
 
             var id = Required("id");
             var assembly = Required("assembly");
-            if (assembly.IndexOfAny(['/', '\\']) >= 0 || !assembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            // A bare file name: no separator, no drive ("C:x.dll" is drive-relative), nothing outside the plugin folder.
+            if (assembly.IndexOfAny(['/', '\\', ':']) >= 0 || !assembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException($"Plugin manifest: invalid assembly '{assembly}'.");
             if (!System.Version.TryParse(Required("api"), out var api))
                 throw new InvalidDataException("Plugin manifest: invalid 'api' version.");
@@ -61,4 +62,15 @@ public sealed record PluginManifest(
     /// major (breaking changes), plugin minor not newer (additions it could call).
     /// </summary>
     public static bool IsCompatible(Version plugin, Version host) => plugin.Major == host.Major && plugin.Minor <= host.Minor;
+}
+
+/// <summary>Plugins made with NockMon, offered by the app when not installed.</summary>
+public static class FirstPartyPlugins
+{
+    /// <summary>CPU, motherboard, GPU and memory sensors (LibreHardwareMonitor; CPU and motherboard need the PawnIO driver).</summary>
+    public const string HardwareSensors = "NockMon.HardwareSensors";
+
+    public const string HardwareSensorsPitch =
+        "Temperatures, fans, voltages and power of the CPU, motherboard, GPUs and memory, by the NockMon author. " +
+        "CPU and motherboard sensors need the PawnIO driver (winget install namazso.PawnIO).";
 }

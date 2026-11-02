@@ -131,15 +131,24 @@ internal static unsafe partial class GpuEngineNames
     public static Dictionary<(long Luid, int Engine), string> Load()
     {
         var names = new Dictionary<(long, int), string>();
-        uint counterLength = 0, instanceLength = 0;
-        if (PdhEnumObjectItemsW(null, null, "GPU Engine", null, ref counterLength, null, ref instanceLength, PerfDetailWizard, 0) != PdhMoreData)
-            return names;
-        var counters = new char[counterLength];
-        var instances = new char[instanceLength];
-        fixed (char* c = counters)
-        fixed (char* i = instances)
+        char[] instances = [];
+        // Instances are per process: the list can grow between the size query and the read. Retry with the new size.
+        for (var attempt = 0; ; attempt++)
         {
-            if (PdhEnumObjectItemsW(null, null, "GPU Engine", c, ref counterLength, i, ref instanceLength, PerfDetailWizard, 0) != 0)
+            uint counterLength = 0, instanceLength = 0;
+            if (PdhEnumObjectItemsW(null, null, "GPU Engine", null, ref counterLength, null, ref instanceLength, PerfDetailWizard, 0) != PdhMoreData)
+                return names;
+            counterLength += 1024;
+            instanceLength += 16 * 1024;
+            var counters = new char[counterLength];
+            instances = new char[instanceLength];
+            uint status;
+            fixed (char* c = counters)
+            fixed (char* i = instances)
+                status = PdhEnumObjectItemsW(null, null, "GPU Engine", c, ref counterLength, i, ref instanceLength, PerfDetailWizard, 0);
+            if (status == 0)
+                break;
+            if (status != PdhMoreData || attempt == 2)
                 return names;
         }
         foreach (var instance in new string(instances).Split('\0', StringSplitOptions.RemoveEmptyEntries))
@@ -156,7 +165,7 @@ internal static unsafe partial class GpuEngineNames
         var l = instance.IndexOf("_luid_0x", StringComparison.Ordinal);
         var e = instance.IndexOf("_eng_", StringComparison.Ordinal);
         var t = instance.IndexOf("_engtype_", StringComparison.Ordinal);
-        if (l < 0 || e < 0 || t < 0)
+        if (l < 0 || e < 0 || t < e + 5 || instance.Length < l + 6 + 21)
             return false;
         var parts = instance.Substring(l + 6, 21).Split('_'); // 0xHHHHHHHH_0xLLLLLLLL
         if (parts.Length != 2

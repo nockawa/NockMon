@@ -14,10 +14,19 @@ public sealed record EditorContext(
     IReadOnlyList<string> ObjectTypeNames,
     IReadOnlyList<GpuAdapterInfo> Gpus);
 
-/// <summary>Edits one series: source (system / CPU / process / kernel object / GPU) × metric × target, plus label and color.</summary>
+/// <summary>
+/// Edits one series: source (system / CPU / process / kernel object / GPU / folder / plugin) × metric × target, plus
+/// label and color.
+/// </summary>
 internal sealed class SeriesEditor : StackPanel
 {
-    private enum Scope { System, Cpu, Process, KernelObject, Gpu }
+    private enum Scope { System, Cpu, Process, KernelObject, Gpu, Folder, Plugin }
+
+    /// <summary>A plugin metric in the metric list (records: compared by value when reloading a series).</summary>
+    private sealed record PluginChoice(string Plugin, string Source, string Metric);
+
+    private readonly ComboBox _group = new() { Header = "Group", MinWidth = 260 };
+    private PluginSeries? _initialPlugin;
 
     private readonly EditorContext _context;
     private readonly ComboBox _scope = new() { Header = "Source", MinWidth = 140 };
@@ -29,6 +38,7 @@ internal sealed class SeriesEditor : StackPanel
     private readonly AutoSuggestBox _engine = new() { Header = "Engine pattern", PlaceholderText = "Compute*; 3D; Video*", MinWidth = 200 };
     private readonly TextBox _label = new() { Header = "Label", PlaceholderText = "Automatic", MinWidth = 160 };
     private readonly ComboBox _color = new() { Header = "Color", MinWidth = 120 };
+    private readonly FolderScopeEditor _folder = new(new Core.Folders.FolderScope(""));
     private readonly DocPanel _doc = new();
 
     public SeriesEditor(SeriesRef source, string? label, string? color, EditorContext context, bool showLabelAndColor)
@@ -41,6 +51,8 @@ internal sealed class SeriesEditor : StackPanel
         {
             if (scope == Scope.Gpu && context.Gpus.Count == 0)
                 continue;
+            if (scope == Scope.Plugin && ExternalMetricCatalog.Sources.All(s => s.Metrics.Count == 0) && source is not PluginSeries)
+                continue;
             _scope.Items.Add(new ComboBoxItem { Content = ScopeName(scope), Tag = scope });
         }
         _scope.SelectionChanged += (_, _) => OnScopeChanged();
@@ -48,6 +60,11 @@ internal sealed class SeriesEditor : StackPanel
         {
             UpdateTargets();
             _doc.Show((_metric.SelectedItem as ComboBoxItem)?.Tag is { } metric ? DocOf(metric) : null);
+        };
+        _group.SelectionChanged += (_, _) =>
+        {
+            if (SelectedScope == Scope.Plugin)
+                FillPluginMetrics();
         };
         foreach (var gpu in context.Gpus)
             _adapter.Items.Add(new ComboBoxItem { Content = gpu.HasNvml ? $"{gpu.Name} (NVML)" : gpu.Name, Tag = gpu });
@@ -76,8 +93,9 @@ internal sealed class SeriesEditor : StackPanel
             });
         }
 
-        Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _scope, _adapter, _metric } });
+        Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _scope, _adapter, _group, _metric } });
         Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _core, _pattern, _objectType, _engine } });
+        Children.Add(_folder);
         Children.Add(_doc);
         if (showLabelAndColor)
             Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _label, _color } });
@@ -134,6 +152,12 @@ internal sealed class SeriesEditor : StackPanel
                     return null;
                 }
                 return new GpuSeries(m, adapter.Name, m == GpuMetric.Engine ? _engine.Text.Trim() : null);
+            case Scope.Folder when metric is FolderMetric m:
+                if (_folder.Build(out error) is not { } folder)
+                    return null;
+                return new FolderSeries(m, folder.Path, folder.Recursive, folder.Include, folder.Exclude, folder.SizeOnDisk);
+            case Scope.Plugin when metric is PluginChoice c:
+                return new PluginSeries(c.Plugin, c.Source, c.Metric);
             default:
                 error = "Select a metric.";
                 return null;
@@ -147,6 +171,7 @@ internal sealed class SeriesEditor : StackPanel
         Scope.Cpu => "CPU (logical)",
         Scope.KernelObject => "Kernel object",
         Scope.Gpu => "GPU",
+        Scope.Plugin => "Sensors and plugins",
         _ => scope.ToString(),
     };
 
@@ -159,6 +184,8 @@ internal sealed class SeriesEditor : StackPanel
             ProcessSeries s => (Scope.Process, s.Field),
             ObjectTypeSeries s => (Scope.KernelObject, s.Metric),
             GpuSeries s => (Scope.Gpu, s.Metric),
+            FolderSeries s => (Scope.Folder, s.Metric),
+            PluginSeries s => (Scope.Plugin, new PluginChoice(s.Plugin, s.Source, s.Metric)),
             _ => (Scope.System, SystemMetric.Cpu),
         };
         _core.Value = source is CoreSeries cs ? cs.Core : 0;
@@ -166,6 +193,9 @@ internal sealed class SeriesEditor : StackPanel
             _pattern.Text = ps.Pattern;
         if (source is ObjectTypeSeries os)
             _objectType.Text = os.TypeName;
+        if (source is FolderSeries fs)
+            _folder.Load(fs.Scope);
+        _initialPlugin = source as PluginSeries;
         if (source is GpuSeries gs)
         {
             _adapter.SelectedItem = _adapter.Items.Cast<ComboBoxItem>().FirstOrDefault(i => ((GpuAdapterInfo)i.Tag).Name == gs.Adapter);
@@ -180,6 +210,12 @@ internal sealed class SeriesEditor : StackPanel
 
     private void OnScopeChanged()
     {
+        if (SelectedScope == Scope.Plugin)
+        {
+            FillPluginGroups();
+            UpdateTargets();
+            return;
+        }
         var previous = (_metric.SelectedItem as ComboBoxItem)?.Content as string;
         _metric.Items.Clear();
         IEnumerable<(object Value, MetricInfo Info)> metrics = SelectedScope switch
@@ -188,6 +224,7 @@ internal sealed class SeriesEditor : StackPanel
             Scope.Cpu => Enum.GetValues<CoreMetric>().Select(m => ((object)m, MetricCatalog.Get(m))),
             Scope.Process => MetricCatalog.ProcessHistoryFields.Select(f => ((object)f, MetricCatalog.Get(f))),
             Scope.KernelObject => Enum.GetValues<ObjectTypeMetric>().Select(m => ((object)m, new ObjectTypeSeries("", m).Info with { DisplayName = m.ToString() })),
+            Scope.Folder => Enum.GetValues<FolderMetric>().Select(m => ((object)m, Core.Folders.FolderScope.Info(m))),
             _ => Enum.GetValues<GpuMetric>().Select(m => ((object)m, MetricCatalog.Get(m))),
         };
         foreach (var (value, info) in metrics)
@@ -200,6 +237,53 @@ internal sealed class SeriesEditor : StackPanel
         UpdateTargets();
     }
 
+    /// <summary>The groups of the plugins' metrics ("source: group" when several sources), the series' own group first selected.</summary>
+    private void FillPluginGroups()
+    {
+        _group.Items.Clear();
+        var sources = ExternalMetricCatalog.Sources;
+        foreach (var source in sources)
+        {
+            foreach (var group in source.Metrics.Select(m => m.Group).Distinct())
+            {
+                _group.Items.Add(new ComboBoxItem
+                {
+                    Content = sources.Count > 1 ? $"{source.DisplayName}: {group}" : group,
+                    Tag = (source, group),
+                });
+            }
+        }
+        var initial = _initialPlugin is { } p ? ExternalMetricCatalog.Find(p.Plugin, p.Source, p.Metric) : null;
+        _group.SelectedItem = _group.Items.Cast<ComboBoxItem>().FirstOrDefault(i =>
+                                  i.Tag is (ExternalSourceInfo s, string g) && initial is not null && g == initial.Group &&
+                                  string.Equals(s.Plugin, _initialPlugin!.Plugin, StringComparison.OrdinalIgnoreCase) &&
+                                  string.Equals(s.Source, _initialPlugin.Source, StringComparison.OrdinalIgnoreCase))
+                              ?? _group.Items.FirstOrDefault();
+        FillPluginMetrics();
+    }
+
+    private void FillPluginMetrics()
+    {
+        _metric.Items.Clear();
+        if (_group.SelectedItem is ComboBoxItem { Tag: (ExternalSourceInfo source, string group) })
+        {
+            foreach (var m in source.Metrics.Where(m => m.Group == group))
+            {
+                var choice = new PluginChoice(source.Plugin, source.Source, m.Id);
+                var item = new ComboBoxItem { Content = m.ShortName, Tag = choice };
+                ToolTipService.SetToolTip(item, DocView.Tooltip(DocOf(choice)));
+                _metric.Items.Add(item);
+            }
+        }
+        if (_initialPlugin is { } p && _metric.Items.Count == 0)
+        {
+            // The plugin is not loaded: keep the series as it is.
+            _metric.Items.Add(new ComboBoxItem { Content = p.Metric, Tag = new PluginChoice(p.Plugin, p.Source, p.Metric) });
+        }
+        var wanted = _initialPlugin is { } q ? new PluginChoice(q.Plugin, q.Source, q.Metric) : null;
+        _metric.SelectedItem = _metric.Items.Cast<ComboBoxItem>().FirstOrDefault(i => Equals(i.Tag, wanted)) ?? _metric.Items.FirstOrDefault();
+    }
+
     private void UpdateTargets()
     {
         var scope = _scope.SelectedItem is ComboBoxItem { Tag: Scope s } ? s : Scope.System;
@@ -208,6 +292,8 @@ internal sealed class SeriesEditor : StackPanel
         _objectType.Visibility = Show(scope == Scope.KernelObject);
         _adapter.Visibility = Show(scope == Scope.Gpu);
         _engine.Visibility = Show(scope == Scope.Gpu && (_metric.SelectedItem as ComboBoxItem)?.Tag is GpuMetric.Engine);
+        _folder.Visibility = Show(scope == Scope.Folder);
+        _group.Visibility = Show(scope == Scope.Plugin);
     }
 
     private static Doc DocOf(object metric) => metric switch
@@ -217,6 +303,8 @@ internal sealed class SeriesEditor : StackPanel
         ProcessField f => Docs.Of(f),
         ObjectTypeMetric m => Docs.Of(m),
         GpuMetric m => Docs.Of(m),
+        FolderMetric m => Docs.Of(m),
+        PluginChoice c => Docs.Of(new PluginSeries(c.Plugin, c.Source, c.Metric)),
         _ => throw new ArgumentException($"Unknown metric {metric}.", nameof(metric)),
     };
 

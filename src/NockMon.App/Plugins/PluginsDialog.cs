@@ -25,7 +25,11 @@ internal sealed class PluginsDialog
     private readonly StackPanel _results = new() { Spacing = 8 };
     private readonly StackPanel _browseStatus = new() { Spacing = 4 };
     private readonly SelectorBar _tabs = new();
+    /// <summary>Latest version of each plugin per feed (<see cref="LatestKey"/>): an update only comes from the feed a plugin was installed from.</summary>
     private Dictionary<string, PluginListing>? _latest;
+    private readonly Dictionary<string, IPluginFeed> _feeds = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string LatestKey(string feed, string id) => $"{feed}\n{id.ToLowerInvariant()}";
     private CancellationTokenSource? _searching;
     private bool _loadedNew;
 
@@ -76,10 +80,12 @@ internal sealed class PluginsDialog
     }
 
     /// <summary>Shows the dialog on <paramref name="tab"/> (0 browse, 1 installed, 2 development).</summary>
+    /// <param name="search">Initial search of the Browse tab.</param>
     /// <returns>true if plugins were loaded: the board should be rebuilt (placeholders become widgets).</returns>
-    public static async Task<bool> ShowAsync(XamlRoot root, LayoutSession session, Action restart, int tab = 0)
+    public static async Task<bool> ShowAsync(XamlRoot root, LayoutSession session, Action restart, int tab = 0, string? search = null)
     {
         var dialog = new PluginsDialog(root, session, restart);
+        dialog._search.Text = search ?? "";
         dialog._tabs.SelectedItem = dialog._tabs.Items[tab];
         dialog.UpdateRestartBar();
         await dialog._dialog.ShowAsync();
@@ -114,6 +120,8 @@ internal sealed class PluginsDialog
 
         var page = new StackPanel { Spacing = 10, Padding = new Thickness(0, 0, 16, 0) };
         page.Children.Add(bar);
+        if (Recommendation() is { } recommendation)
+            page.Children.Add(recommendation);
         page.Children.Add(SourcesEditor());
         page.Children.Add(_browseStatus);
         page.Children.Add(_results);
@@ -151,8 +159,9 @@ internal sealed class PluginsDialog
         add.Click += (_, _) =>
         {
             var source = input.Text.Trim();
-            var isUrl = Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+            var isUrl = PluginFeeds.IsUrl(source);
             string? problem = source.Length == 0 ? "Enter a feed URL or a folder."
+                : isUrl && !PluginFeeds.IsSecureUrl(source) ? "Use https: plugins run as administrator, plain http could be tampered with."
                 : !isUrl && !Directory.Exists(source) ? "Folder not found."
                 : _session.Settings.PluginSources.Contains(source, StringComparer.OrdinalIgnoreCase) ? "Already listed."
                 : null;
@@ -230,7 +239,9 @@ internal sealed class PluginsDialog
     private async Task<(List<PluginListing> Listings, List<string> Errors)> SearchAllAsync(string? query, CancellationToken cancel)
     {
         var prerelease = _session.Settings.PluginPrerelease;
-        var feeds = _session.Settings.PluginSources.Select(s => PluginFeeds.Create(s, PluginRuntime.Http)).ToList();
+        // Kept across searches: a NuGet feed fetches its service index once.
+        var feeds = _session.Settings.PluginSources
+            .Select(s => _feeds.TryGetValue(s, out var feed) ? feed : _feeds[s] = PluginFeeds.Create(s, PluginRuntime.Http)).ToList();
         var tasks = feeds.Select(async f =>
         {
             try
@@ -250,7 +261,9 @@ internal sealed class PluginsDialog
             .ThenBy(l => l.Title, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
         if (string.IsNullOrEmpty(query))
-            _latest = merged.ToDictionary(l => l.Id, StringComparer.OrdinalIgnoreCase);
+            _latest = results.SelectMany(r => r.Listings)
+                .GroupBy(l => LatestKey(l.Feed.Name, l.Id))
+                .ToDictionary(g => g.Key, g => g.MaxBy(l => NuGetVersion.TryParse(l.Version, out var v) ? v : new NuGetVersion(0, 0, 0))!);
         return (merged, results.Select(r => r.Error).OfType<string>().ToList());
     }
 
@@ -280,10 +293,15 @@ internal sealed class PluginsDialog
         {
             actions.Children.Clear();
             var installed = PluginRuntime.Store.Find(listing.Id);
-            var newer = installed is not null && IsNewer(listing.Version, installed.Version);
+            // Updates come from the feed the plugin was installed from: the same id on another feed may be someone else's.
+            var sameFeed = installed is not null && string.Equals(installed.Source, listing.Feed.Name, StringComparison.OrdinalIgnoreCase);
+            var newer = sameFeed && IsNewer(listing.Version, installed!.Version);
             if (installed is not null && !installed.PendingRemoval && !newer)
             {
-                actions.Children.Add(new Button { Content = "Installed", IsEnabled = false, MinWidth = 110 });
+                var button = new Button { Content = "Installed", IsEnabled = false, MinWidth = 110 };
+                if (!sameFeed)
+                    ToolTipService.SetToolTip(button, $"Installed from {installed.Source}: updates come from there only.");
+                actions.Children.Add(button);
                 return;
             }
             var install = new Button { Content = newer ? $"Update to {listing.Version}" : "Install", MinWidth = 110, Style = AccentStyle() };
@@ -433,7 +451,7 @@ internal sealed class PluginsDialog
             : loaded.Error is { } error ? ($"Failed to load: {error}", true)
             : loaded.Manifest?.Version is { } running && !string.Equals(Normalize(running), Normalize(plugin.Version), StringComparison.OrdinalIgnoreCase)
                 ? ($"Running {running}; {plugin.Version} starts at the next start.", false)
-            : ($"Loaded · widgets: {string.Join(", ", loaded.Widgets.Select(w => w.DisplayName))}", false);
+            : ($"Loaded · {Contents(loaded)}", false);
         var line = Secondary(text);
         if (critical)
             line.Foreground = Brush("SystemFillColorCriticalBrush");
@@ -449,7 +467,7 @@ internal sealed class PluginsDialog
             await SearchAllAsync(null, CancellationToken.None);
         foreach (var (plugin, actions) in plugins)
         {
-            if (_latest?.GetValueOrDefault(plugin.Id) is not { } listing || !IsNewer(listing.Version, plugin.Version))
+            if (_latest?.GetValueOrDefault(LatestKey(plugin.Source, plugin.Id)) is not { } listing || !IsNewer(listing.Version, plugin.Version))
                 continue;
             var update = new Button { Content = $"Update to {listing.Version}", MinWidth = 110, Style = AccentStyle() };
             update.Flyout = ConfirmInstall(listing, async () =>
@@ -480,7 +498,7 @@ internal sealed class PluginsDialog
             - Implement `IWidgetPlugin` (one class per widget kind) and build: the output folder gets a `nockmon-plugin.json`.
             - Add that folder below, or start NockMon with `nockmon --plugin <folder>`.
 
-            A development plugin is loaded from a copy of the folder: rebuild any time, then restart to reload it. It takes precedence over an installed copy of the same plugin. To test the package itself, `dotnet pack` it and add the output folder as a source in Browse.
+            A development plugin is loaded from a snapshot of the folder, kept where only administrators can change it: plugins run as administrator, and any program could change your build folder. The snapshot is taken when you add the folder, click **Reload**, or start NockMon with `--plugin`; rebuild any time, then Reload and restart. It takes precedence over an installed copy of the same plugin. To test the package itself, `dotnet pack` it and add the output folder as a source in Browse.
             """));
 
         var settings = _session.Settings;
@@ -493,7 +511,7 @@ internal sealed class PluginsDialog
             text.Children.Add(new TextBlock { Text = folder, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
             var status = loaded is null ? Secondary("Loads at the next start.")
                 : loaded.Error is { } failure ? Secondary($"{loaded.Title}: {failure}")
-                : Secondary($"{loaded.Title} {loaded.Manifest?.Version} · widgets: {string.Join(", ", loaded.Widgets.Select(w => w.DisplayName))}" + (commandLine ? "  ·  from the command line" : ""));
+                : Secondary($"{loaded.Title} {loaded.Manifest?.Version} · {Contents(loaded)}" + (commandLine ? "  ·  from the command line" : ""));
             if (loaded?.Error is not null)
                 status.Foreground = Brush("SystemFillColorCriticalBrush");
             text.Children.Add(status);
@@ -501,6 +519,25 @@ internal sealed class PluginsDialog
             var actions = new StackPanel { Spacing = 4 };
             if (!commandLine)
             {
+                var reload = new Button { Content = "Reload", MinWidth = 90 };
+                ToolTipService.SetToolTip(reload, "Snapshot the folder's current build; it loads at the next start.");
+                reload.Click += (_, _) =>
+                {
+                    try
+                    {
+                        PluginRuntime.TakeSnapshot(folder);
+                        PluginRuntime.MarkRestartRequired();
+                        status.Text = "Snapshot taken: restart NockMon to load it.";
+                        status.Foreground = Brush("TextFillColorSecondaryBrush");
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        status.Text = $"Cannot copy the folder: {e.Message}";
+                        status.Foreground = Brush("SystemFillColorCriticalBrush");
+                    }
+                    UpdateRestartBar();
+                };
+                actions.Children.Add(reload);
                 var remove = new Button { Content = "Remove", MinWidth = 90 };
                 remove.Click += (_, _) =>
                 {
@@ -538,7 +575,7 @@ internal sealed class PluginsDialog
                 return;
             settings.DevPluginFolders.Add(folder);
             _session.SaveSettings();
-            var loaded = PluginRuntime.LoadDevelopment(folder);
+            var loaded = PluginRuntime.LoadDevelopment(folder, snapshot: true); // The user's explicit choice: snapshot now.
             _loadedNew |= loaded.Error is null && loaded.DevelopmentFolder == folder;
             UpdateRestartBar();
             ShowTab();
@@ -548,7 +585,40 @@ internal sealed class PluginsDialog
         return new ScrollViewer { Content = page };
     }
 
+    /// <summary>The first-party sensors plugin, while it is neither installed nor loaded: Show searches for it.</summary>
+    private InfoBar? Recommendation()
+    {
+        var id = FirstPartyPlugins.HardwareSensors;
+        if (PluginRuntime.FindLoaded(id) is not null || PluginRuntime.Store.Find(id) is { PendingRemoval: false })
+            return null;
+        var show = new Button { Content = "Show" };
+        show.Click += (_, _) =>
+        {
+            _search.Text = id;
+            _ = SearchAsync();
+        };
+        return new InfoBar
+        {
+            Title = "Hardware sensors",
+            Message = FirstPartyPlugins.HardwareSensorsPitch,
+            Severity = InfoBarSeverity.Informational,
+            IsOpen = true,
+            ActionButton = show,
+        };
+    }
+
     // ---- Building blocks --------------------------------------------------------------------------------------
+
+    /// <summary>"widgets: A, B · metrics: Sensors".</summary>
+    private static string Contents(LoadedPlugin plugin)
+    {
+        var parts = new List<string>();
+        if (plugin.Widgets.Count > 0)
+            parts.Add($"widgets: {string.Join(", ", plugin.Widgets.Select(w => w.DisplayName))}");
+        if (plugin.MetricSources.Count > 0)
+            parts.Add($"metrics: {string.Join(", ", plugin.MetricSources.Select(m => m.DisplayName))}");
+        return string.Join(" · ", parts);
+    }
 
     private static PluginManifest? TryManifest(string directory)
     {

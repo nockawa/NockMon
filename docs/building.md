@@ -37,8 +37,10 @@ exercise native sampling run against the live machine.
 
 ## Releasing
 
-NockMon ships four ways: an Inno Setup installer (GitHub release and winget), a single-file executable (GitHub release),
-and the dotnet tool (nuget.org). A release is a tag:
+NockMon ships as an Inno Setup installer (GitHub release and winget), plus the `nockmon` command line as a dotnet tool
+(nuget.org), which starts the installed app and relays MCP. NockMon runs as administrator, so the app itself only ships
+where non-administrators cannot modify it (Program Files): no single-file, portable or dotnet tool copy of the app, which
+would run from a folder the user's non-elevated processes can write. A release is a tag on a commit of `main`:
 
 ```powershell
 git tag v1.2.0      # v<major>.<minor>.<patch>, or v1.2.0-beta.1 for a prerelease
@@ -48,11 +50,15 @@ git push origin v1.2.0
 The [Release workflow](../.github/workflows/release.yml) then tests, builds every artifact with the tag's version, and,
 once approved on the `release` environment, publishes:
 
-1. **GitHub release** `v<version>`: the executables and `SHA256SUMS.txt`, with generated notes.
+1. **GitHub release** `v<version>`: the installers and `SHA256SUMS.txt`, with generated notes.
 2. **nuget.org**, through [trusted publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing) (no
-   stored API key): the tool's RID-specific packages, then `NockMon`; `NockMon.Sdk` only when its version is new.
-3. **winget**: a pull request to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) (stable versions,
-   when the `WINGET_TOKEN` secret is set), merged by its moderators.
+   stored API key): `NockMon` (the tool); `NockMon.Sdk` only when its version is new.
+3. **winget**, in a job of its own (a second approval): a pull request to
+   [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) (stable versions, when the `WINGET_TOKEN` secret is
+   set), merged by its moderators. `wingetcreate` is pinned by version and SHA-256, and runs without the release's write
+   token or OIDC.
+
+A tag on a commit that is not on `main` fails the build. Actions are pinned by commit hash.
 
 Pull requests to `main` and manual runs build and test the same artifacts (downloadable from the run) and publish
 nothing. Every publishing step can be re-run.
@@ -62,14 +68,17 @@ One-time setup:
 | Where | What |
 |---|---|
 | nuget.org, your name → **Trusted Publishing** | A policy: repository owner `nockawa`, repository `NockMon`, workflow file `release.yml`, environment `release`. |
-| GitHub, **Settings → Environments** | Environment `release`, with yourself as required reviewer and deployments limited to tags `v*`. |
+| nuget.org, same page | One policy per plugin workflow: `claude-usage-plugin.yml` and `hardware-sensors-plugin.yml`, environment `release`. |
+| nuget.org, **ID prefix reservation** | Reserve the `NockMon.` prefix: first-party packages (`NockMon.HardwareSensors`) then show as verified. |
+| GitHub, **Settings → Environments** | Environment `release`, with yourself as required reviewer and deployments limited to tags `v*`, `claude-usage-v*` and `hardware-sensors-v*`. |
+| GitHub, **Settings → Rules → Rulesets** | A tag ruleset on `v*`, `claude-usage-v*` and `hardware-sensors-v*` restricting updates and deletions: a published tag cannot be moved. |
 | GitHub, environment `release` → secrets | `WINGET_TOKEN`: a classic personal access token with the `public_repo` scope (wingetcreate forks winget-pkgs and opens the pull request with it). |
 
 To build locally, the same script the workflow runs:
 
 ```powershell
 winget install JRSoftware.InnoSetup           # once: the installer compiler
-pwsh tools/release/build.ps1 -Version 1.2.0   # -Architectures x64 / -SkipInstaller / -SkipSingleFile / -SkipTool
+pwsh tools/release/build.ps1 -Version 1.2.0   # -Architectures x64 / -SkipInstaller / -SkipTool
 ```
 
 Without `-Version`, the version of `src/NockMon.Launcher/NockMon.Launcher.csproj`. The script writes to
@@ -77,13 +86,12 @@ Without `-Version`, the version of `src/NockMon.Launcher/NockMon.Launcher.csproj
 
 | Output | What |
 |---|---|
-| `NockMon-<version>-<arch>-setup.exe` | Installer of the self-contained app (`installer/NockMon.iss`): per machine in Program Files, Start menu shortcut, optional desktop shortcut and PATH entry, closes a running NockMon on upgrade and uninstall. |
-| `NockMon-<version>-<arch>.exe` | Single-file app (`-p:SingleFile=true`): self-extracting to `%TEMP%\.net\NockMon` on first start. |
-| `nuget/` | The dotnet tool: the `NockMon` package and one RID-specific package per architecture, each carrying the published app. The tool itself (`nockmon`) is a small `net10.0` launcher: it starts the app elevated, brings an existing instance to the front, and runs the MCP relay. Plus the plugin SDK package. |
-| `SHA256SUMS.txt` | Hashes of the executables. |
+| `NockMon-<version>-<arch>-setup.exe` | Installer of the self-contained app (`installer/NockMon.iss`): per machine in Program Files only (another folder is refused), Start menu shortcut, optional desktop shortcut and PATH entry, closes a running NockMon on upgrade; on uninstall asks it to exit (`NockMon.exe --exit`) so its kernel trace session stops. |
+| `nuget/` | The dotnet tool `NockMon`: a small `net10.0` command line that starts the installed app elevated (found through the installer's HKLM entry), brings an existing instance to the front, and runs the MCP relay. Plus the plugin SDK package. |
+| `SHA256SUMS.txt` | Hashes of the installers. |
 | `winget/manifests/` | The winget manifests (installer URLs of the GitHub release, hashes). |
 
-Try a local tool package before publishing:
+Try a local tool package before publishing (it starts the installed NockMon):
 
 ```powershell
 dotnet tool install -g NockMon --add-source artifacts/release/<version>/nuget --version <version>
@@ -103,10 +111,10 @@ release. Its major.minor is the plugin API version (`PluginApi.Version` and `Noc
 | `src/NockMon.App` | The WinUI 3 application: window, board, widgets (Win2D rendering), editors, tray, plugins runtime, AI agents host. |
 | `src/NockMon.Core` | Everything testable without UI: sampling (native APIs, kernel ETW session, GPU through D3DKMT and NVML), history, metrics, layouts and their persistence, plugin store and feeds, built-in documentation, MCP tools and server. |
 | `src/NockMon.Sdk` | The plugin SDK: interfaces and the MSBuild files that make a project a plugin. |
-| `src/NockMon.Launcher` | The `nockmon` dotnet tool: launcher and MCP stdio relay (the app itself relays too, for the installer and single-file builds: `NockMon.exe mcp`). |
+| `src/NockMon.Launcher` | The `nockmon` dotnet tool: starts the installed app, and relays MCP over stdio (the app relays too, for installs without the tool: `NockMon.exe mcp`). |
 | `tests/NockMon.Core.Tests` | Unit and integration tests of the core. |
 | `samples` | Example plugins (public domain, not in the solution): `ClaudeUsage.NockMon`, published on nuget.org by its own workflow. |
-| `.github/workflows` | The release workflow (tags `v*` publish, pull requests build and test) and the sample plugin's (tags `claude-usage-v*`). |
+| `.github/workflows` | The release workflow (tags `v*` publish, pull requests build and test) and the plugins' (tags `claude-usage-v*`, `hardware-sensors-v*`; the Hardware sensors plugin needs `NockMon.Sdk` 1.1 on nuget.org, published with NockMon 1.2). |
 | `installer` | The Inno Setup script. |
 | `tools/release` | The release build script. |
 | `tools/icon` | The application icon generator. |
@@ -131,7 +139,7 @@ release. Its major.minor is the plugin API version (`PluginApi.Version` and `Noc
 
 | Variable | Effect |
 |---|---|
-| `NOCKMON_DATA_DIR` | Uses another data folder instead of `%LOCALAPPDATA%\NockMon` (tests, profiling, alternative profiles). |
+| `NOCKMON_DATA_DIR` | Uses another data folder instead of `%ProgramData%\NockMon\<user SID>` (tests, profiling, alternative profiles). Honored by Debug builds and non-elevated processes only: any non-elevated process could set it to redirect an elevated release build. |
 | `NOCKMON_DEBUG_COMPACT=1` | Enters compact mode 4 s after start and leaves it at 8 s, logging window geometry to `compact-debug.log` in the data folder. |
 
 A build with `-p:ProfilingBuild=true` is optimized and honors `NOCKMON_SKIP_ELEVATION=1`, so profilers can run it

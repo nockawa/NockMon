@@ -21,6 +21,7 @@ public sealed class LayoutStore(string directory)
         if (layout.SchemaVersion > LayoutDocument.CurrentSchemaVersion)
             throw new NotSupportedException(
                 $"Layout '{layout.Name}' has schema version {layout.SchemaVersion}; this build supports up to {LayoutDocument.CurrentSchemaVersion}.");
+        LayoutRepair.Repair(layout);
         return layout;
     }
 
@@ -37,24 +38,27 @@ public sealed class LayoutStore(string directory)
         JsonSerializer.Deserialize(json, MonitorJsonContext.Default.WidgetConfig) ?? throw new JsonException("Empty widget.");
 
     /// <summary>Names of the readable layouts, sorted. Unreadable files are skipped.</summary>
-    public IReadOnlyList<string> List()
+    public IReadOnlyList<string> List() => LoadAll().Select(l => l.Name).ToList();
+
+    /// <summary>The readable layouts, sorted by name, each read once. Unreadable files are skipped.</summary>
+    public IReadOnlyList<LayoutDocument> LoadAll()
     {
         if (!System.IO.Directory.Exists(Directory))
             return [];
-        var names = new List<string>();
+        var layouts = new List<LayoutDocument>();
         foreach (var file in System.IO.Directory.EnumerateFiles(Directory, "*.json"))
         {
             try
             {
-                names.Add(Deserialize(File.ReadAllText(file)).Name);
+                layouts.Add(Deserialize(File.ReadAllText(file)));
             }
             catch (Exception e) when (e is JsonException or InvalidDataException or NotSupportedException or IOException)
             {
                 // Corrupt or newer file: not listed, left untouched.
             }
         }
-        names.Sort(StringComparer.CurrentCultureIgnoreCase);
-        return names;
+        layouts.Sort((a, b) => StringComparer.CurrentCultureIgnoreCase.Compare(a.Name, b.Name));
+        return layouts;
     }
 
     public bool Exists(string name) => File.Exists(PathFor(name));
@@ -94,8 +98,13 @@ public sealed class LayoutStore(string directory)
         if (!string.Equals(FileNameFor(oldName), FileNameFor(newName), StringComparison.OrdinalIgnoreCase) && Exists(newName))
             throw new InvalidOperationException($"Layout '{newName}' already exists.");
         layout.Name = newName;
+        if (string.Equals(FileNameFor(oldName), FileNameFor(newName), StringComparison.OrdinalIgnoreCase))
+        {
+            AppPaths.WriteAtomically(PathFor(newName), Serialize(layout)); // Same file (a case change): rewritten in place.
+            return;
+        }
+        Save(layout); // The new file first: a failure leaves the old one, never neither.
         Delete(oldName);
-        Save(layout);
     }
 
     public static string FileNameFor(string name)

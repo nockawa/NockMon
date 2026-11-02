@@ -15,13 +15,15 @@ public static partial class Docs
         return kind switch
         {
             WidgetKind.ProcessTable => D(title,
-                "Top processes sorted by any metric. Click a column header to sort, again to reverse.",
+                "Top processes sorted by any metric. Click a column header to sort, again to reverse; right-click a row for its menu.",
                 $"""
                 Lists the top N processes of the latest process scan, sorted by the chosen metric. Every process metric can be a column: hover a header for its meaning.
 
                 - **Group by name** sums processes sharing an image name into one row (browsers, `svchost.exe`): the Instances column counts them.
                 - **Exclude Idle** hides the System Idle Process, which otherwise tops a CPU sort on a quiet machine.
                 - **Filter** keeps matching processes only. {PatternSyntax}
+
+                Right-click a row: details, open its location, copy, chart it, set its priority or affinity (P-cores or E-cores only), suspend or resume it, dump it, end it or its tree. Critical processes, kernel processes and NockMon itself cannot be ended or suspended.
 
                 Refreshed at the process scan rate (2 s by default, toolbar setting).
                 """),
@@ -98,6 +100,19 @@ public static partial class Docs
                 - Engines are filtered by a name pattern; each shown engine costs about 0.3 ms per sample to query.
                 - Engine names arrive a moment after start ("Engine N" until then).
                 """),
+            WidgetKind.Folder => D(title,
+                "A folder's size and file count over time, with its growth and its largest subfolders.",
+                $"""
+                Watches a folder: a downloads or temp folder filling up, a build output, a log or cache folder that grows, a backup target. Shows the size, the file count, the growth over the chart's window, and the size over time; hover for the last scan and the largest subfolders, which are also listed when the widget is tall enough.
+
+                - **Subfolders**: with them, the whole tree is walked. Junctions and folder symbolic links are not followed (no loops, no double counting); OneDrive folders are walked.
+                - **Include**: file name patterns counted, e.g. `*.log; *.tmp` (all files when empty). **Exclude**: folder names skipped with their content, e.g. `node_modules; .git; bin; obj`.
+                - **Size on disk**: the space taken on the volume (whole clusters; less for compressed, sparse and online-only files) instead of the files' sizes. Approximate: a tiny file stored inside its NTFS record still counts one cluster, and a file with several hard links counts once per link.
+                - **Rescan every**: the longest time between two scans. **Rescan on change**: a change rescans the folder after 2 s, at most every 5 s.
+                - A scan never runs sooner than nine times its own duration after the previous one ended (at most 10 % of a core for a huge tree), and folders are scanned one at a time.
+
+                Folder size, files and subfolders are also series for charts and values (source "Folder"). The history starts at the folder's first scan; folders that cannot be read are counted and reported, not fatal. Double-click the widget to open the folder.
+                """),
             WidgetKind.Stack => D(title,
                 "Several widgets sharing one area, one shown at a time.",
                 """
@@ -136,6 +151,34 @@ public static partial class Docs
         ProcessSeries s => Of(s.Field),
         ObjectTypeSeries s => Of(s.Metric),
         GpuSeries s => Of(s.Metric),
+        FolderSeries s => Of(s.Metric),
+        PluginSeries s => Of(s),
         _ => throw new ArgumentException($"Unknown series {series.GetType().Name}.", nameof(series)),
+    };
+
+    /// <summary>A plugin's metric: what the plugin says of it (its name and group), or that the plugin is missing.</summary>
+    public static Doc Of(PluginSeries series) => ExternalMetricCatalog.Find(series.Plugin, series.Source, series.Metric) is { } m
+        ? D(m.Name, $"{m.Group}: {m.ShortName}, from the plugin {series.Plugin}.",
+            $"A metric published by the plugin `{series.Plugin}` (source `{series.Source}`, id `{series.Metric}`). NockMon records it at every " +
+            "sample from the plugin's first value, like its own metrics.")
+        : D(series.Metric, $"Plugin '{series.Plugin}' is not loaded: no values.",
+            $"This series comes from the plugin `{series.Plugin}`. Install it from the **Plugins** dialog (toolbar); the series is kept meanwhile.");
+
+    private const string FolderNote =
+        "Scanned in the background while a layout uses the folder: at its widget's interval, every 60 s for a chart or value series, " +
+        "and soon after a change when its widget watches changes. The scan options (subfolders, include, exclude, size on disk) are part of the series.";
+
+    public static Doc Of(FolderMetric metric) => metric switch
+    {
+        FolderMetric.Size => D("Folder size",
+            "Total size of the files in the folder (and its subfolders when included).",
+            $"The sum of the file sizes, or of the space they take on disk with **Size on disk**. Excluded folders and unreadable folders are not counted.\n\n{FolderNote}"),
+        FolderMetric.Files => D("Folder files",
+            "Number of files in the folder (and its subfolders when included).",
+            $"Only files matching the include patterns, when set. A steadily growing count is a cache or log folder that is never cleaned.\n\n{FolderNote}"),
+        FolderMetric.Folders => D("Folder subfolders",
+            "Number of subfolders in the folder (all levels when subfolders are included).",
+            $"Excluded folders (and their content) and folder links are not counted.\n\n{FolderNote}"),
+        _ => throw new ArgumentOutOfRangeException(nameof(metric), metric, null),
     };
 }

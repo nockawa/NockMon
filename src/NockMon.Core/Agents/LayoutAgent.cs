@@ -58,11 +58,7 @@ public sealed class LayoutAgent
     public LayoutsInfo ListLayouts()
     {
         var current = _session.Current;
-        var layouts = _session.Names.Select(name =>
-        {
-            var layout = TryPeek(name);
-            return new LayoutSummary(name, layout?.Pages.Count ?? 0, layout?.AllWidgets.Count() ?? 0);
-        }).ToList();
+        var layouts = _session.PeekAll().Select(l => new LayoutSummary(l.Name, l.Pages.Count, l.AllWidgets.Count())).ToList();
         return new LayoutsInfo(current.Name, current.ActivePage, State(), layouts, Board(current));
     }
 
@@ -232,8 +228,12 @@ public sealed class LayoutAgent
         EnsureAllowed();
         name = Existing(name);
         EnsureNotEditing();
+        var confirmed = LayoutStore.Serialize(_session.Peek(name));
         if (!await _host.ConfirmAsync("Delete layout", $"{client} wants to delete the layout '{name}'. This cannot be undone.", "Delete"))
             return (false, ListLayouts());
+        // Other calls ran meanwhile (the dialog awaits on the UI thread): delete only the layout the user saw.
+        if (!_session.Names.Contains(name, StringComparer.OrdinalIgnoreCase) || LayoutStore.Serialize(_session.Peek(name)) != confirmed)
+            throw new AgentException($"Layout '{name}' changed while the user was asked: not deleted.");
         Run(() => _session.Delete(name));
         return (true, ListLayouts());
     }
@@ -387,10 +387,32 @@ public sealed class LayoutAgent
                     throw new AgentException($"Process field {p.Field} cannot be charted (no history). Chartable: {string.Join(", ", MetricCatalog.ProcessHistoryFields)}.");
                 case ProcessSeries p when string.IsNullOrWhiteSpace(p.Pattern):
                     throw new AgentException("A process series needs a pattern (image name, wildcards allowed).");
+                case FolderSeries f:
+                    ValidateFolder(f.Scope);
+                    break;
             }
+        }
+        if (widget is FolderWidgetConfig folder)
+        {
+            ValidateFolder(folder.Scope);
+            if (folder.ScanSeconds < (int)Folders.FolderScanner.MinInterval.TotalSeconds)
+                throw new AgentException($"scanSeconds must be at least {Folders.FolderScanner.MinInterval.TotalSeconds:0}.");
         }
         if (widget is PluginWidgetConfig plugin && PluginCatalog.Find(plugin) is null)
             throw new AgentException($"Plugin widget '{plugin.Plugin}/{plugin.Widget}' is not loaded (list_widget_kinds lists the available ones).");
+    }
+
+    /// <summary>
+    /// The folder must exist now (a typo would otherwise only show as "Folder not found" on the board), and the user must
+    /// be able to list it without elevation: NockMon scans as administrator, and an agent runs as the user. One message
+    /// for both, so an agent cannot probe which protected folders exist.
+    /// </summary>
+    private static void ValidateFolder(Folders.FolderScope scope)
+    {
+        if (string.IsNullOrWhiteSpace(scope.Path))
+            throw new AgentException("A folder needs a path (\"path\").");
+        if (!Native.UserAccess.CanListFolder(scope.FullPath))
+            throw new AgentException($"Folder not found, or not readable by your account without elevation: {scope.FullPath}.");
     }
 
     private string? Icon(string? icon)
@@ -427,18 +449,6 @@ public sealed class LayoutAgent
         var result = default(T)!;
         Run(() => { result = action(); });
         return result;
-    }
-
-    private LayoutDocument? TryPeek(string name)
-    {
-        try
-        {
-            return _session.Peek(name);
-        }
-        catch (Exception e) when (e is IOException or JsonException or InvalidDataException or NotSupportedException)
-        {
-            return null;
-        }
     }
 
     private BoardInfo Board(LayoutDocument layout)

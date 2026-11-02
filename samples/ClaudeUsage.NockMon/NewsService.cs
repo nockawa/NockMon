@@ -23,6 +23,7 @@ public static class NewsService
     private static readonly HashSet<string> Read = [];
     private static readonly List<string> ReadOrder = [];
     private static readonly HashSet<Source> Baselined = [];
+    private static readonly Dictionary<Source, DateTimeOffset> Fetched = []; // Last successful fetch, per source.
     private static CancellationTokenSource? _loop;
     private static SemaphoreSlim _wake = new(0);
     private static string? _dataDirectory;
@@ -91,9 +92,30 @@ public static class NewsService
     {
         while (!cancel.IsCancellationRequested)
         {
+            // Only the sources due: a loop restarted (the last widget re-created on a page switch or an edit) resumes the
+            // schedule instead of fetching everything again.
             HashSet<Source> sources;
+            TimeSpan? notYet = null;
             lock (Gate)
-                sources = NeededSources();
+            {
+                var now = DateTimeOffset.UtcNow;
+                var needed = NeededSources();
+                sources = needed.Where(s => !Fetched.TryGetValue(s, out var at) || now - at >= Interval).ToHashSet();
+                if (sources.Count == 0 && needed.Count > 0)
+                    notYet = needed.Min(s => Fetched[s] + Interval) - now;
+            }
+            if (notYet is { } wait)
+            {
+                try
+                {
+                    await _wake.WaitAsync(wait < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : wait, cancel);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                continue;
+            }
             var results = await Task.WhenAll(sources.Select(async s => (Source: s, Items: await FetchAsync(s, cancel))));
             if (cancel.IsCancellationRequested)
                 return;
@@ -105,6 +127,7 @@ public static class NewsService
                     if (items is not { Count: > 0 })
                         continue;
                     Items[source] = items;
+                    Fetched[source] = DateTimeOffset.UtcNow;
                     if (Baselined.Add(source))
                         foreach (var item in items)
                             Remember(item.Key);
@@ -195,8 +218,9 @@ public static class NewsService
             Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
             File.WriteAllText(StatePath, root.ToJsonString());
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            // Not saved: the read set lives on in memory, and the loop goes on.
         }
     }
 

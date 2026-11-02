@@ -26,9 +26,6 @@ public sealed class MonitorService
 
     public int LogicalProcessors => Engine.LogicalProcessorCount;
 
-    /// <summary>When false, ticks are not forwarded (window hidden).</summary>
-    public bool IsUiActive { get; set; } = true;
-
     public CpuScale CpuScale
     {
         get => _cpuScale;
@@ -55,15 +52,17 @@ public sealed class MonitorService
 
     private void OnSampled()
     {
-        if (!IsUiActive || Interlocked.Exchange(ref _pending, 1) != 0)
+        if (Interlocked.Exchange(ref _pending, 1) != 0)
             return;
-        if (!_dispatcher.TryEnqueue(() =>
-            {
-                Volatile.Write(ref _pending, 0);
-                Updated?.Invoke();
-            }))
+        _deliver ??= () =>
         {
             Volatile.Write(ref _pending, 0);
-        }
+            Updated?.Invoke();
+        };
+        if (!_dispatcher.TryEnqueue(_deliver))
+            Volatile.Write(ref _pending, 0);
     }
+
+    /// <summary>One handler for every tick: a lambda per sample would allocate it and its WinRT wrapper each time.</summary>
+    private DispatcherQueueHandler? _deliver;
 }

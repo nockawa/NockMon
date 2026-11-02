@@ -19,6 +19,7 @@ public static class WidgetContentFactory
         ProcessEventsWidgetConfig events => new ProcessEventsWidget(events, monitor),
         ObjectTypesWidgetConfig objects => new ObjectTypesWidget(objects, monitor),
         GpuEnginesWidgetConfig engines => new GpuEnginesWidget(engines, monitor),
+        FolderWidgetConfig folder => new FolderWidget(folder, monitor),
         StackWidgetConfig stack => new StackWidget(stack, item => Create(item, monitor)),
         PluginWidgetConfig plugin => new Plugins.PluginWidgetView(plugin),
         _ => throw new ArgumentException($"Unknown widget {config.GetType().Name}.", nameof(config)),

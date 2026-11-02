@@ -23,12 +23,15 @@ public sealed partial class CellTable : UserControl
     private readonly TextBlock[] _headers;
     private readonly TextBlock[,] _cells;
     private readonly Image?[,] _icons;
+    private readonly Grid _grid;
+    private readonly Border _highlight;
 
     public CellTable(IReadOnlyList<CellColumn> columns, int rows)
     {
         _columns = columns.ToArray();
         rows = Math.Max(1, rows);
-        var grid = new Grid { Padding = new Thickness(6, 0, 6, 4), ColumnSpacing = 8 };
+        // A background: right-clicks between the cells' text hit the grid (cells are not hit-test visible).
+        var grid = _grid = new Grid { Padding = new Thickness(6, 0, 6, 4), ColumnSpacing = 8, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         foreach (var column in _columns)
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(column.Width) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -43,6 +46,19 @@ public sealed partial class CellTable : UserControl
             Grid.SetColumnSpan(band, _columns.Length + 1);
             grid.Children.Add(band);
         }
+
+        _highlight = new Border
+        {
+            Background = (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"],
+            Opacity = 0.3,
+            CornerRadius = new CornerRadius(3),
+            Margin = new Thickness(-4, 0, -4, 0),
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+        };
+        Grid.SetColumnSpan(_highlight, _columns.Length + 1);
+        grid.Children.Add(_highlight);
+        grid.RightTapped += OnGridRightTapped;
 
         var mono = new FontFamily("Cascadia Mono, Consolas");
         _headers = new TextBlock[_columns.Length];
@@ -116,6 +132,9 @@ public sealed partial class CellTable : UserControl
     /// <summary>Header click (column index).</summary>
     public event Action<int>? HeaderTapped;
 
+    /// <summary>Right-click (or press and hold) on a row: row index, the element and position to show a menu at.</summary>
+    public event Action<int, FrameworkElement, Windows.Foundation.Point>? RowRightTapped;
+
     public int RowCount => _cells.GetLength(0);
     public int ColumnCount => _columns.Length;
 
@@ -126,6 +145,10 @@ public sealed partial class CellTable : UserControl
         if (cell.Text != text)
             cell.Text = text;
     }
+
+    public string GetCell(int row, int column) => _cells[row, column].Text;
+
+    public string GetHeader(int column) => _columns[column].Header;
 
     /// <summary>Sets a cell's icon (icon columns only); no-op when unchanged.</summary>
     public void SetIcon(int row, int column, ImageSource? source)
@@ -145,6 +168,24 @@ public sealed partial class CellTable : UserControl
                 SetIcon(r, c, null);
             }
         }
+    }
+
+    /// <summary>Highlights a row (the one a menu is open for); null for none.</summary>
+    public void HighlightRow(int? row)
+    {
+        _highlight.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
+        if (row is { } r)
+            Grid.SetRow(_highlight, r + 1);
+    }
+
+    private void OnGridRightTapped(object sender, Microsoft.UI.Xaml.Input.RightTappedRoutedEventArgs e)
+    {
+        var position = e.GetPosition(_grid);
+        var row = (int)(position.Y / RowHeight) - 1; // Row 0 is the header.
+        if (row < 0 || row >= RowCount)
+            return;
+        e.Handled = true;
+        RowRightTapped?.Invoke(row, _grid, position);
     }
 
     /// <summary>Marks the sorted column (▼/▲, accent color); -1 for none.</summary>

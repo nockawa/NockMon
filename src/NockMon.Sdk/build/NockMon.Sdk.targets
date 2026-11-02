@@ -12,11 +12,11 @@
   </PropertyGroup>
 
   <!--
-    The host provides the SDK, the Windows App SDK (projections, bootstrapper, WebView2) and CsWinRT: not copied to the
+    The host provides the SDK, the Windows App SDK (projections, bootstrapper, WebView2), Win2D and CsWinRT: not copied to the
     output, so the folder holds only the plugin and its own dependencies. NockMonKeepHostFiles=true disables this.
   -->
   <PropertyGroup>
-    <_McmHostPattern>(?i)^(NockMon\.Sdk|Microsoft\.WinUI|Microsoft\.Windows\..+|Microsoft\.WindowsAppRuntime.*|Microsoft\.InteractiveExperiences.*|Microsoft\.Security\.Authentication\.OAuth.*|Microsoft\.Web\.WebView2.*|WebView2Loader|WinRT\.Runtime)\.(dll|pdb|xml|winmd|pri)$</_McmHostPattern>
+    <_McmHostPattern>(?i)^(NockMon\.Sdk|Microsoft\.WinUI|Microsoft\.Windows\..+|Microsoft\.WindowsAppRuntime.*|Microsoft\.InteractiveExperiences.*|Microsoft\.Security\.Authentication\.OAuth.*|Microsoft\.Web\.WebView2.*|WebView2Loader|WinRT\.Runtime|Microsoft\.Graphics\.Canvas.*)\.(dll|pdb|xml|winmd|pri)$</_McmHostPattern>
   </PropertyGroup>
 
   <Target Name="_NockMonDropHostFiles" AfterTargets="ResolveReferences;ResolvePackageAssets" Condition="'$(NockMonKeepHostFiles)' != 'true'">
@@ -30,22 +30,65 @@
     </ItemGroup>
   </Target>
 
+  <!--
+    NockMon runs on Windows x64 and ARM64 only: runtime-specific assets for other platforms (Linux, macOS, Android, 32-bit
+    Windows) are neither copied nor packed. NockMonKeepAllRuntimes=true disables this.
+  -->
+  <Target Name="_NockMonWindowsRuntimesOnly" AfterTargets="ResolvePackageAssets" Condition="'$(NockMonKeepAllRuntimes)' != 'true'">
+    <ItemGroup>
+      <_McmForeignRuntime Include="@(RuntimeTargetsCopyLocalItems)"
+                          Condition="'%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' != 'win' and '%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' != 'win-x64' and '%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' != 'win-arm64'" />
+      <RuntimeTargetsCopyLocalItems Remove="@(_McmForeignRuntime)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Writes a flat JSON object of string fields, escaped (a multi-line description or a quote must not break it). -->
+  <UsingTask TaskName="_NockMonWriteJson" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <File ParameterType="System.String" Required="true" />
+      <Fields ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var json = new System.Text.StringBuilder("{\n");
+        for (var i = 0; i < Fields.Length; i++)
+        {
+            json.Append("  \"").Append(Fields[i].ItemSpec).Append("\": \"");
+            foreach (var c in Fields[i].GetMetadata("Value"))
+            {
+                if (c == '"' || c == '\\')
+                    json.Append('\\').Append(c);
+                else if (c < 0x20)
+                    json.Append("\\u").Append(((int)c).ToString("x4"));
+                else
+                    json.Append(c);
+            }
+            json.Append(i < Fields.Length - 1 ? "\",\n" : "\"\n");
+        }
+        json.Append("}\n");
+        var text = json.ToString();
+        if (!System.IO.File.Exists(File) || System.IO.File.ReadAllText(File) != text)
+            System.IO.File.WriteAllText(File, text);
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
   <Target Name="_NockMonWriteManifest" AfterTargets="Build">
     <PropertyGroup>
       <_McmTitle>$(Title)</_McmTitle>
       <_McmTitle Condition="'$(_McmTitle)' == ''">$(PackageId)</_McmTitle>
-      <_McmJson>{
-  "id": "$(PackageId.Replace('\', '\\').Replace('"', '\"'))",
-  "version": "$(PackageVersion)",
-  "assembly": "$(TargetFileName)",
-  "api": "$(NockMonPluginApiVersion)",
-  "title": "$(_McmTitle.Replace('\', '\\').Replace('"', '\"'))",
-  "description": "$(Description.Replace('\', '\\').Replace('"', '\"'))",
-  "authors": "$(Authors.Replace('\', '\\').Replace('"', '\"'))",
-  "projectUrl": "$(PackageProjectUrl)"
-}</_McmJson>
     </PropertyGroup>
-    <WriteLinesToFile File="$(_NockMonManifest)" Lines="$([MSBuild]::Escape($(_McmJson)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <_McmField Include="id" Value="$(PackageId)" />
+      <_McmField Include="version" Value="$(PackageVersion)" />
+      <_McmField Include="assembly" Value="$(TargetFileName)" />
+      <_McmField Include="api" Value="$(NockMonPluginApiVersion)" />
+      <_McmField Include="title" Value="$(_McmTitle)" />
+      <_McmField Include="description" Value="$(Description)" />
+      <_McmField Include="authors" Value="$(Authors)" />
+      <_McmField Include="projectUrl" Value="$(PackageProjectUrl)" />
+    </ItemGroup>
+    <_NockMonWriteJson File="$(_NockMonManifest)" Fields="@(_McmField)" />
   </Target>
 
   <Target Name="_NockMonPluginPayload" DependsOnTargets="_NockMonWriteManifest">

@@ -42,8 +42,8 @@ The robot icon takes the accent color while an agent is connected; its tooltip l
 The server is reached through the `nockmon mcp` command, a stdio MCP server that relays to the running NockMon. It
 never starts NockMon itself (no UAC prompt behind your back): start NockMon first, turn agents on, then connect.
 
-`nockmon` is on the PATH with the dotnet tool and with the installer's PATH option. Otherwise (single executable, or
-installed without the PATH option), use the executable's full path instead of `nockmon`, for example
+`nockmon` is on the PATH with the dotnet tool and with the installer's PATH option. Otherwise (installed without the
+PATH option), use the executable's full path instead of `nockmon`, for example
 `"C:\Program Files\NockMon\NockMon.exe" mcp`. The robot button's panel always shows the command that works for your
 installation.
 
@@ -148,11 +148,13 @@ series (core index, chartable process metrics), plugins (must be loaded), stacks
 - **Local only**: a named pipe (`NockMon.Mcp.<your user SID>`) that rejects remote clients. No TCP port, nothing on the
   network.
 - **Your account only**: the pipe's access list allows your user and SYSTEM, and denies network logons. Other users of
-  the machine can't connect.
+  the machine can't connect. Your non-elevated processes may read and write it, nothing more: they can neither add
+  instances of the pipe nor change its access list. Low-integrity sandboxes can't open it.
 - **Elevation-aware**: NockMon runs elevated; its pipe explicitly accepts your non-elevated processes (medium integrity),
   which is where agents run. Without this, Windows would only let elevated processes connect.
 - **No squatting**: NockMon creates the pipe as its first instance; a process that grabbed the name first makes the
-  server fail visibly rather than talk to an impostor.
+  server fail visibly. The other way round, the relay connects only to a pipe your account owns, and lets the server
+  identify it, not act as it: while NockMon is not running, another account's pipe under that name is refused.
 - **Read tools can't change anything.** Layout changes go through an edit session you review; deletion asks you.
 - **Command lines** (which can hold secrets) are withheld unless you allow them.
 - Process names and command lines come from the machine: the server's instructions tell agents to treat them as data,

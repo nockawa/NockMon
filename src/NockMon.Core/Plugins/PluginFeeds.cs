@@ -35,9 +35,14 @@ public static class PluginFeeds
 
     /// <summary>A NuGet V3 feed for URLs, a folder of .nupkg files otherwise.</summary>
     public static IPluginFeed Create(string source, HttpClient http) =>
-        Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
-            ? new NuGetFeed(http, source)
-            : new FolderFeed(source);
+        IsUrl(source) ? new NuGetFeed(http, source) : new FolderFeed(source);
+
+    public static bool IsUrl(string source) => Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+
+    /// <summary>
+    /// Plugins run as administrator: a feed reached over plain http could be answered by anyone on the network path.
+    /// </summary>
+    public static bool IsSecureUrl(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
 
     internal static bool Matches(string? query, params string?[] fields) =>
         string.IsNullOrWhiteSpace(query) || query.Split(' ', StringSplitOptions.RemoveEmptyEntries)
@@ -72,7 +77,8 @@ public sealed class NuGetFeed(HttpClient http, string indexUrl) : IPluginFeed
                 Text(item, "iconUrl"),
                 Text(item, "projectUrl"),
                 item.TryGetProperty("totalDownloads", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetInt64() : null,
-                item.TryGetProperty("verified", out var v) && v.ValueKind == JsonValueKind.True,
+                // nuget.org's reserved prefixes only: any other feed could claim it.
+                indexUrl == PluginFeeds.NuGetOrg && item.TryGetProperty("verified", out var v) && v.ValueKind == JsonValueKind.True,
                 this));
         }
         return listings;
@@ -91,6 +97,8 @@ public sealed class NuGetFeed(HttpClient http, string indexUrl) : IPluginFeed
     {
         if (_resources is { } cached)
             return cached;
+        if (!PluginFeeds.IsSecureUrl(indexUrl))
+            throw new InvalidOperationException($"{indexUrl}: plain http is refused (plugins run as administrator); use https.");
         using var doc = JsonDocument.Parse(await http.GetStringAsync(indexUrl, cancellation));
         string? search = null, packages = null;
         foreach (var resource in doc.RootElement.GetProperty("resources").EnumerateArray())
@@ -104,6 +112,8 @@ public sealed class NuGetFeed(HttpClient http, string indexUrl) : IPluginFeed
         }
         if (search is null || packages is null)
             throw new InvalidDataException($"{indexUrl} does not offer package-type search (SearchQueryService/3.5.0) and downloads.");
+        if (!PluginFeeds.IsSecureUrl(search) || !PluginFeeds.IsSecureUrl(packages))
+            throw new InvalidDataException($"{indexUrl} points to plain http services: refused (plugins run as administrator).");
         _resources = (search, packages.EndsWith('/') ? packages : packages + "/");
         return _resources.Value;
     }

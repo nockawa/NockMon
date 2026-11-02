@@ -136,6 +136,7 @@ public readonly record struct GridRect(int Column, int Row, int ColumnSpan, int 
 [JsonDerivedType(typeof(ProcessEventsWidgetConfig), "processEvents")]
 [JsonDerivedType(typeof(ObjectTypesWidgetConfig), "objectTypes")]
 [JsonDerivedType(typeof(GpuEnginesWidgetConfig), "gpuEngines")]
+[JsonDerivedType(typeof(FolderWidgetConfig), "folder")]
 [JsonDerivedType(typeof(StackWidgetConfig), "stack")]
 [JsonDerivedType(typeof(PluginWidgetConfig), "plugin")]
 public abstract class WidgetConfig
@@ -240,6 +241,41 @@ public sealed class GpuEnginesWidgetConfig : WidgetConfig
 
     /// <summary>Grid columns; 0 = automatic.</summary>
     public int Columns { get; set; }
+}
+
+/// <summary>A folder's size and file count over time, scanned in the background (see <see cref="Folders.FolderScanner"/>).</summary>
+public sealed class FolderWidgetConfig : WidgetConfig
+{
+    public const int DefaultScanSeconds = 60;
+
+    /// <summary>Folder path; environment variables (<c>%TEMP%</c>) are expanded.</summary>
+    public string Path { get; set; } = "";
+
+    public bool Recursive { get; set; } = true;
+
+    /// <summary>File name patterns counted (<c>*.log;*.tmp</c>); null = every file.</summary>
+    public string? Include { get; set; }
+
+    /// <summary>Folder name patterns skipped with their content (<c>node_modules;.git</c>).</summary>
+    public string? Exclude { get; set; }
+
+    /// <summary>Allocated size instead of the logical size.</summary>
+    public bool SizeOnDisk { get; set; }
+
+    /// <summary>Rescan at least this often (seconds).</summary>
+    public int ScanSeconds { get; set; } = DefaultScanSeconds;
+
+    /// <summary>Rescan soon after a change (FileSystemWatcher), within the pacing limits.</summary>
+    public bool WatchChanges { get; set; } = true;
+
+    /// <summary>Chart window (seconds).</summary>
+    public int WindowSeconds { get; set; } = 3600;
+
+    public bool ShowFiles { get; set; } = true;
+
+    [JsonIgnore] public Folders.FolderScope Scope => new(Path, Recursive, Include, Exclude, SizeOnDisk);
+
+    public FolderSeries Series(FolderMetric metric) => new(metric, Path, Recursive, Include, Exclude, SizeOnDisk);
 }
 
 /// <summary>

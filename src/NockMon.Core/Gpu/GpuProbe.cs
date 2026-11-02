@@ -52,7 +52,11 @@ public sealed class GpuProbe : IGpuSource
         Task.Run(LoadEngineNames);
     }
 
-    public IReadOnlyList<GpuAdapterInfo> Adapters => _adapters.Select(a => a.Info).ToArray();
+    /// <summary>Fixed after construction: built once.</summary>
+    public IReadOnlyList<GpuAdapterInfo> Adapters => _adapterInfos ??= _adapters.Select(a => a.Info).ToArray();
+
+    private GpuAdapterInfo[]? _adapterInfos;
+    private readonly Dictionary<int, double> _perDevice = [];
 
     public bool HasNvml => _nvml is not null;
 
@@ -84,7 +88,7 @@ public sealed class GpuProbe : IGpuSource
         // NVML keeps sparse per-process samples: look back past the previous call (overlap is harmless, max per PID).
         var since = (ulong)((_lastProcessQueryUtc.AddSeconds(-2) - DateTime.UnixEpoch).Ticks / 10);
         _lastProcessQueryUtc = now;
-        var perDevice = new Dictionary<int, double>();
+        var perDevice = _perDevice;
         foreach (var adapter in _adapters)
         {
             if (adapter.NvmlDevice == 0)

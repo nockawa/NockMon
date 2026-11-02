@@ -33,17 +33,24 @@ public sealed class HistoryStore
     private readonly Dictionary<string, NameSeries> _names = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, WatchedSeries> _watched = new(StringComparer.Ordinal);
     private readonly Dictionary<string, NamePattern> _patterns = new();
+    private readonly Dictionary<string, (int Version, List<NameSeries> Names)> _matches = new(StringComparer.Ordinal);
+    private int _namesVersion; // Changes when a name appears or is evicted: cached pattern matches are then stale.
     private readonly HashSet<string> _seenPatterns = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (float[] Objects, float[] Handles)> _objectTypes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, GpuRings> _gpus = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly int FolderMetricCount = Enum.GetValues<FolderMetric>().Length;
+    private readonly Dictionary<Folders.FolderScope, FolderRings> _folders = [];
+    private readonly HashSet<Folders.FolderScope> _seenFolders = [];
     private float[] _gpuScratch = [];
     private float[] _scanScratch = [];
     private float[] _scratch = [];
+    private int[] _slotScratch = [];
 
+    /// <summary>One image name's per-scan history: sparse, most fields are zero most of the time (see <see cref="SparseRing"/>).</summary>
     private sealed class NameSeries(string name, int capacity)
     {
         public readonly string Name = name;
-        public readonly float[][] Values = CreateBuffers(ProcessFieldCount, capacity);
+        public readonly SparseRing[] Values = Enumerable.Range(0, ProcessFieldCount).Select(_ => new SparseRing(capacity)).ToArray();
         public long LastActiveScan;
     }
 
@@ -94,8 +101,12 @@ public sealed class HistoryStore
     /// <summary>Kernel object type names seen in scans.</summary>
     public IEnumerable<string> ObjectTypeNames => _objectTypes.Keys;
 
-    /// <summary>Appends a fast sample: system, cores, and the watched-pattern aggregates of this tick.</summary>
-    public void AppendSample(Snapshot snapshot, IReadOnlyList<WatchedAggregate> watched)
+    /// <summary>
+    /// Appends a fast sample: system, cores, the watched-pattern aggregates of this tick, and the latest counts of the
+    /// watched folders (held from scan to scan; a folder no longer listed loses its history).
+    /// </summary>
+    public void AppendSample(Snapshot snapshot, IReadOnlyList<WatchedAggregate> watched, IReadOnlyList<Folders.FolderReading>? folders = null,
+        IReadOnlyList<ExternalReading>? external = null)
     {
         if (snapshot.Cores.Length != CoreCount)
             throw new ArgumentException($"Snapshot has {snapshot.Cores.Length} cores, history expects {CoreCount}.", nameof(snapshot));
@@ -113,8 +124,9 @@ public sealed class HistoryStore
         }
 
         _seenPatterns.Clear();
-        foreach (var aggregate in watched)
+        for (var w = 0; w < watched.Count; w++) // Indexed: no boxed enumerator per sample.
         {
+            var aggregate = watched[w];
             if (!_watched.TryGetValue(aggregate.Pattern, out var series))
                 _watched[aggregate.Pattern] = series = new WatchedSeries(Capacity) { FirstSample = TotalSamples };
             for (var f = 0; f < ProcessFieldCount; f++)
@@ -138,8 +150,143 @@ public sealed class HistoryStore
                 rings.Engines[e][slot] = (float)gpu.Engines[e];
         }
 
+        AppendFolders(slot, folders ?? []);
+        AppendExternal(slot, external ?? []);
+
         TotalSamples++;
     }
+
+    // --- External metrics (plugins) --------------------------------------------------------------------------------
+
+    private sealed class ExternalRing(int capacity, long firstSample)
+    {
+        public readonly float[] Values = new float[capacity];
+
+        /// <summary>Sample index of the first value (the source's first non-NaN value).</summary>
+        public readonly long FirstSample = firstSample;
+
+        public long LastWritten = firstSample;
+    }
+
+    private readonly Dictionary<(string, string), Dictionary<string, ExternalRing>> _external = new(SourceKeyComparer.Instance);
+
+    /// <summary>Per source, the ring of each metric of its current list (null until the metric gives a value): no lookups per sample.</summary>
+    private readonly Dictionary<IExternalMetricSource, (IReadOnlyList<ExternalMetric> Metrics, ExternalRing?[] Rings)> _externalMaps =
+        new(ReferenceEqualityComparer.Instance);
+
+    private readonly List<(Dictionary<string, ExternalRing> Rings, string Id)> _externalEvicted = [];
+
+    /// <summary>
+    /// One value per metric and sample. A metric starts at its first value (a partial history, like a folder's); then a
+    /// missing value (NaN, a source failing or gone) holds the previous one, and a metric missing for the whole retention
+    /// is dropped.
+    /// </summary>
+    private void AppendExternal(int slot, IReadOnlyList<ExternalReading> readings)
+    {
+        for (var r = 0; r < readings.Count; r++)
+        {
+            var reading = readings[r];
+            var key = (reading.Source.Plugin, reading.Source.Source);
+            if (!_external.TryGetValue(key, out var rings))
+                _external[key] = rings = new Dictionary<string, ExternalRing>(StringComparer.Ordinal);
+            if (!_externalMaps.TryGetValue(reading.Source, out var map) || !ReferenceEquals(map.Metrics, reading.Metrics))
+            {
+                map = (reading.Metrics, new ExternalRing?[reading.Metrics.Count]);
+                for (var i = 0; i < map.Rings.Length; i++)
+                    map.Rings[i] = rings.GetValueOrDefault(reading.Metrics[i].Id);
+                _externalMaps[reading.Source] = map;
+            }
+            if (!reading.Valid)
+                continue;
+            for (var i = 0; i < map.Rings.Length && i < reading.Values.Length; i++)
+            {
+                var value = reading.Values[i];
+                if (double.IsNaN(value))
+                    continue; // Held below.
+                var ring = map.Rings[i];
+                if (ring is null)
+                {
+                    map.Rings[i] = ring = new ExternalRing(Capacity, TotalSamples);
+                    rings[reading.Metrics[i].Id] = ring;
+                }
+                ring.Values[slot] = (float)value;
+                ring.LastWritten = TotalSamples;
+            }
+        }
+
+        // Every ring gets this sample's slot: the previous value when nothing came (the slot holds a value from a
+        // retention ago otherwise).
+        var previous = (slot + Capacity - 1) % Capacity;
+        foreach (var rings in _external.Values)
+        {
+            foreach (var (id, ring) in rings)
+            {
+                if (ring.LastWritten == TotalSamples)
+                    continue;
+                if (TotalSamples - ring.LastWritten > Capacity)
+                    _externalEvicted.Add((rings, id));
+                else
+                    ring.Values[slot] = ring.Values[previous];
+            }
+        }
+        if (_externalEvicted.Count > 0)
+        {
+            foreach (var (rings, id) in _externalEvicted)
+                rings.Remove(id);
+            _externalEvicted.Clear();
+            _externalMaps.Clear(); // Rebuilt at the next reading, without the dropped rings.
+        }
+    }
+
+    /// <summary>Samples since the metric's first value only (like a folder).</summary>
+    private int ReadExternal(PluginSeries series, Span<float> destination)
+    {
+        if (!_external.TryGetValue((series.Plugin, series.Source), out var rings) || !rings.TryGetValue(series.Metric, out var ring))
+            return 0;
+        var n = (int)Math.Min(destination.Length, TotalSamples - ring.FirstSample);
+        CopyLatest(ring.Values, TotalSamples, Capacity, destination[..n]);
+        return n;
+    }
+
+    private sealed class FolderRings(int capacity, long firstSample)
+    {
+        public readonly float[][] Values = CreateBuffers(FolderMetricCount, capacity);
+
+        /// <summary>Sample index of the first value (the folder's first scan after it started being watched).</summary>
+        public readonly long FirstSample = firstSample;
+    }
+
+    private void AppendFolders(int slot, IReadOnlyList<Folders.FolderReading> folders)
+    {
+        _seenFolders.Clear();
+        for (var i = 0; i < folders.Count; i++)
+        {
+            var (scope, result) = folders[i];
+            if (!_folders.TryGetValue(scope, out var rings))
+                _folders[scope] = rings = new FolderRings(Capacity, TotalSamples);
+            for (var m = 0; m < FolderMetricCount; m++)
+                rings.Values[m][slot] = (float)result.Value((FolderMetric)m);
+            _seenFolders.Add(scope);
+        }
+        foreach (var scope in _folders.Keys)
+        {
+            if (!_seenFolders.Contains(scope))
+                _folders.Remove(scope);
+        }
+    }
+
+    /// <summary>Samples since the folder's first scan only: a partial history, not zeros (a size starting at 0 would read as growth).</summary>
+    private int ReadFolder(FolderSeries series, Span<float> destination)
+    {
+        if (!_folders.TryGetValue(series.Scope, out var rings))
+            return 0;
+        var n = (int)Math.Min(destination.Length, TotalSamples - rings.FirstSample);
+        CopyLatest(rings.Values[(int)series.Metric], TotalSamples, Capacity, destination[..n]);
+        return n;
+    }
+
+    /// <summary>Folders currently held in history.</summary>
+    public IEnumerable<Folders.FolderScope> FolderScopes => _folders.Keys;
 
     private sealed class GpuRings(int capacity, int engines)
     {
@@ -201,8 +348,8 @@ public sealed class HistoryStore
 
         foreach (var series in _names.Values)
         {
-            foreach (var buffer in series.Values)
-                buffer[slot] = 0;
+            foreach (var ring in series.Values)
+                ring.Clear(slot);
         }
 
         foreach (ref readonly var p in table.Span)
@@ -211,10 +358,11 @@ public sealed class HistoryStore
             {
                 series = new NameSeries(p.Name, ScanCapacity);
                 _names.Add(p.Name, series);
+                _namesVersion++;
             }
             series.LastActiveScan = TotalScans;
             for (var f = 0; f < ProcessFieldCount; f++)
-                series.Values[f][slot] += (float)p.GetValue(MetricCatalog.ProcessHistoryFields[f]);
+                series.Values[f].Add(slot, (float)p.GetValue(MetricCatalog.ProcessHistoryFields[f]));
         }
 
         foreach (ref readonly var t in table.ObjectTypeSpan)
@@ -230,14 +378,24 @@ public sealed class HistoryStore
         foreach (var (name, series) in _names)
         {
             if (TotalScans - series.LastActiveScan > ScanCapacity)
+            {
                 _names.Remove(name);
+                _namesVersion++;
+            }
         }
     }
 
     /// <summary>Copies the latest samples of <paramref name="series"/>, oldest first, into <paramref name="destination"/>.</summary>
-    /// <returns>Number of samples written: min(destination length, <see cref="Count"/>).</returns>
+    /// <returns>
+    /// Number of samples written: min(destination length, <see cref="Count"/>); for a folder, only the samples since its
+    /// first scan (none while it is not watched).
+    /// </returns>
     public int Read(SeriesRef series, Span<float> destination)
     {
+        if (series is FolderSeries folder)
+            return ReadFolder(folder, destination[..Math.Min(destination.Length, Count)]);
+        if (series is PluginSeries plugin)
+            return ReadExternal(plugin, destination[..Math.Min(destination.Length, Count)]);
         var n = Math.Min(destination.Length, Count);
         var dst = destination[..n];
         switch (series)
@@ -294,7 +452,9 @@ public sealed class HistoryStore
 
         var scans = ScanCount;
         var firstScan = TotalScans - scans;
-        Span<int> slots = scans <= 1024 ? stackalloc int[scans] : new int[scans];
+        if (_slotScratch.Length < scans)
+            _slotScratch = new int[ScanCapacity];
+        var slots = _slotScratch.AsSpan(0, scans);
         var count = 0;
         for (var k = 0; k < scans; k++)
         {
@@ -343,31 +503,69 @@ public sealed class HistoryStore
         }
     }
 
-    /// <summary>Sums matching name series per scan, then holds each scan's value until the next one.</summary>
+    /// <summary>
+    /// Sums the matching name series per scan, then holds each scan's value until the next one. Only the scans the window
+    /// needs are summed (<see cref="ScansSince"/>: a value list reading one sample sums one or two, not the whole
+    /// retention), over the names matching the pattern (<see cref="MatchingNames"/>).
+    /// </summary>
     private void UpsampleScans(string patternText, int field, long firstSample, Span<float> destination)
     {
-        var scans = ScanCount;
-        if (!_patterns.TryGetValue(patternText, out var pattern))
-            _patterns[patternText] = pattern = new NamePattern(patternText);
-
+        var names = MatchingNames(patternText);
+        var scans = ScansSince(firstSample);
         EnsureScratch();
         var sums = _scanScratch.AsSpan(0, scans);
         var one = _scratch.AsSpan(0, scans);
         sums.Clear();
-        foreach (var named in _names.Values)
+        foreach (var named in names)
         {
-            if (!pattern.IsMatch(named.Name))
-                continue;
-            CopyLatest(named.Values[field], TotalScans, ScanCapacity, one);
+            named.Values[field].CopyLatest(TotalScans, one);
             for (var i = 0; i < scans; i++)
                 sums[i] += one[i];
         }
         HoldScans(sums, firstSample, destination);
     }
 
-    private void ReadObjectType(ObjectTypeSeries series, Span<float> destination)
+    /// <summary>The names matching a pattern, cached until a name appears or is evicted.</summary>
+    private List<NameSeries> MatchingNames(string patternText)
+    {
+        if (_matches.TryGetValue(patternText, out var cached) && cached.Version == _namesVersion)
+            return cached.Names;
+        if (!_patterns.TryGetValue(patternText, out var pattern))
+            _patterns[patternText] = pattern = new NamePattern(patternText);
+        var names = cached.Names ?? [];
+        names.Clear();
+        foreach (var named in _names.Values)
+        {
+            if (pattern.IsMatch(named.Name))
+                names.Add(named);
+        }
+        _matches[patternText] = (_namesVersion, names);
+        return names;
+    }
+
+    /// <summary>
+    /// How many of the newest scans cover the samples from <paramref name="firstSample"/> on: the last scan taken at or
+    /// before it (its value holds into the window), and every later one. Scan sample indexes only grow: binary search.
+    /// </summary>
+    private int ScansSince(long firstSample)
     {
         var scans = ScanCount;
+        var firstScan = TotalScans - scans;
+        int lo = 0, hi = scans - 1, last = -1;
+        while (lo <= hi)
+        {
+            var mid = (lo + hi) >>> 1;
+            if (_scanSampleIndex[(int)((firstScan + mid) % ScanCapacity)] <= firstSample)
+                (last, lo) = (mid, mid + 1);
+            else
+                hi = mid - 1;
+        }
+        return last < 0 ? scans : scans - last;
+    }
+
+    private void ReadObjectType(ObjectTypeSeries series, Span<float> destination)
+    {
+        var scans = ScansSince(TotalSamples - destination.Length);
         EnsureScratch();
         var values = _scanScratch.AsSpan(0, scans);
         if (_objectTypes.TryGetValue(series.TypeName, out var rings))

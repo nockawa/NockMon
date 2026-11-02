@@ -374,7 +374,8 @@ public sealed class Snapshot
     /// <summary>One entry per GPU adapter (sample rate).</summary>
     public List<Gpu.GpuStats> Gpus = [];
 
-    public ProcessStats[] Processes => Table.Items;
+    /// <summary>The whole backing array, past <see cref="ProcessCount"/> too: tests only (readers use <see cref="ProcessSpan"/>).</summary>
+    internal ProcessStats[] Processes => Table.Items;
     public int ProcessCount => Table.Count;
     public ReadOnlySpan<ProcessStats> ProcessSpan => Table.Span;
 }

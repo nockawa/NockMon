@@ -48,7 +48,8 @@ Write widget plugins for **NockMon** (`dotnet tool install -g NockMon`). Full gu
    ```
 
 3. **Develop**: build, then in NockMon open **Plugins › Development** and add the build output folder (or start
-   `nockmon --plugin <output folder>`). The folder is loaded from a copy: rebuild any time, restart the app to reload.
+   `nockmon --plugin <output folder>`). NockMon loads a protected snapshot of the folder: after a rebuild, click Reload
+   (Plugins, Development) and restart, or start again with `--plugin`.
 
 4. **Publish**: `dotnet pack` produces the plugin package (package type `NockMonPlugin`). Try it first by adding the
    pack output folder as a source in **Plugins › Browse › Sources**, then push it to nuget.org: it appears in every
@@ -67,6 +68,9 @@ Write widget plugins for **NockMon** (`dotnet tool install -g NockMon`). Full gu
 - The host provides this SDK, the Windows App SDK and the .NET runtime: they are not copied to the output nor packed.
   Other dependencies are, and resolve from the plugin's folder.
 - Exceptions thrown by a widget are contained: it shows the error and a Retry link.
+- **Metrics** (API 1.1): implement `IMetricPlugin` to publish values NockMon records in its history and offers to charts,
+  value widgets and AI agents. `Metrics` and `TryRead` run on NockMon's sampling thread at every sample: return cached
+  values, never block.
 - NockMon runs **elevated**: so does your plugin. Users are warned at install; be worthy of it.
 
 ## Versioning

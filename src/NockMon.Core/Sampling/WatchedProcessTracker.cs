@@ -31,6 +31,7 @@ public sealed class WatchedProcessTracker(ISystemProbe probe) : IDisposable
 
     private readonly Dictionary<ProcessKey, Entry> _entries = new();
     private readonly List<ProcessKey> _retired = [];
+    private readonly Dictionary<ProcessKey, long> _unmatched = new(); // Processes no pattern matches, by last scan seen.
     private WatchedAggregate[] _aggregates = [];
     private NamePattern[] _patterns = [];
     private long _scanGeneration;
@@ -61,6 +62,7 @@ public sealed class WatchedProcessTracker(ISystemProbe probe) : IDisposable
     {
         var distinct = patterns.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.Ordinal).Take(64).ToArray();
         CloseAll();
+        _unmatched.Clear();
         _patterns = distinct.Select(p => new NamePattern(p)).ToArray();
         _aggregates = distinct.Select(p => new WatchedAggregate(p)).ToArray();
     }
@@ -82,8 +84,19 @@ public sealed class WatchedProcessTracker(ISystemProbe probe) : IDisposable
             var key = new ProcessKey(p.Pid, p.CreateTime);
             if (!_entries.TryGetValue(key, out var entry))
             {
+                // Matched once per process, not every scan: most processes match no pattern, for their whole life.
+                if (_unmatched.ContainsKey(key))
+                {
+                    _unmatched[key] = _scanGeneration;
+                    continue;
+                }
                 var mask = Match(p.Name);
-                if (mask == 0 || !probe.TryOpenProcess(key, out var handle))
+                if (mask == 0)
+                {
+                    _unmatched[key] = _scanGeneration;
+                    continue;
+                }
+                if (!probe.TryOpenProcess(key, out var handle))
                     continue;
                 entry = new Entry { Handle = handle, PatternMask = mask, Previous = p };
                 _entries.Add(key, entry);
@@ -110,6 +123,11 @@ public sealed class WatchedProcessTracker(ISystemProbe probe) : IDisposable
                 Retire(key, entry);
         }
         FlushRetired();
+        foreach (var (key, generation) in _unmatched)
+        {
+            if (generation != _scanGeneration)
+                _unmatched.Remove(key); // Exited.
+        }
     }
 
     /// <summary>Reads every watched process and recomputes <see cref="Aggregates"/>.</summary>

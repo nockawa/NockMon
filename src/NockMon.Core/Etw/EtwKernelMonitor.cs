@@ -73,15 +73,17 @@ public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.Sessi
             _drivers.Refresh();
             _lastDriverRefresh = Stopwatch.GetTimestamp();
 
-            _session = new TraceEventSession(_sessionName) { StopOnDispose = true };
+            // TraceEvent's default preallocates max(64 MB, 2 MB per logical processor) of kernel buffers, kept by an
+            // orphaned session until reboot; events are consumed as they come, so a few MB suffice (EventsLost tells).
+            _session = new TraceEventSession(_sessionName) { StopOnDispose = true, BufferSizeMB = 16 };
             _session.EnableKernelProvider(
                 KernelTraceEventParser.Keywords.DiskIO | KernelTraceEventParser.Keywords.NetworkTCPIP
                 | KernelTraceEventParser.Keywords.Process | KernelTraceEventParser.Keywords.DeferedProcedureCalls
                 | KernelTraceEventParser.Keywords.Interrupt);
             Subscribe(_session.Source.Kernel);
+            Status = null; // Before the thread: a session failing at once reports it, not overwritten here.
             _thread = new Thread(ProcessEvents) { IsBackground = true, Name = "NockMon ETW" };
             _thread.Start(_session);
-            Status = null;
         }
         catch (Exception e) when (e is UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
         {

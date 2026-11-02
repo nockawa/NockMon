@@ -5,10 +5,12 @@
 .DESCRIPTION
   Per architecture (x64, arm64):
     NockMon-<version>-<arch>-setup.exe  Inno Setup installer (self-contained, per machine, Start menu): GitHub release, winget.
-    NockMon-<version>-<arch>.exe        Single-file executable (self-extracting): GitHub release.
   Plus:
-    nuget\                              The dotnet tool packages (NockMon, NockMon.win-x64, NockMon.win-arm64) and the plugin
-                                        SDK package (NockMon.Sdk, at its own version: the plugin API version).
+    nuget\                              The dotnet tool package (NockMon: the command line, which starts the installed app and
+                                        relays MCP) and the plugin SDK package (NockMon.Sdk, at its own version: the plugin
+                                        API version).
+  No single-file or portable build: NockMon runs as administrator, so its files must be where non-administrators cannot
+  modify them (Program Files). A self-extracting executable runs from %TEMP%.
     SHA256SUMS.txt                      Hashes of the downloads.
     winget\manifests\...                winget-pkgs manifests pointing at the GitHub release download URLs.
 
@@ -17,14 +19,13 @@
 
 .EXAMPLE
   pwsh tools/release/build.ps1 -Version 1.1.0
-  pwsh tools/release/build.ps1 -Architectures x64 -SkipSingleFile
+  pwsh tools/release/build.ps1 -Architectures x64 -SkipTool
 #>
 [CmdletBinding()]
 param(
     [string] $Version,
     [string[]] $Architectures = @('x64', 'arm64'),
     [switch] $SkipInstaller,
-    [switch] $SkipSingleFile,
     [switch] $SkipTool
 )
 
@@ -74,16 +75,6 @@ foreach ($arch in $Architectures) {
         Invoke-Dotnet publish $app @common -r $rid '-p:SelfContained=true' -o $folder
         & (Find-Iscc) /Q "/DAppVersion=$version" "/DFileVersion=$fileVersion" "/DArch=$arch" "/DSourceDir=$folder" "/DOutputDir=$out" (Join-Path $root 'installer\NockMon.iss')
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed for $arch ($LASTEXITCODE)." }
-    }
-
-    if (-not $SkipSingleFile) {
-        # Its own intermediate state: the single-file build turns on the MSIX tooling, which changes the .pri pipeline.
-        Invoke-Dotnet clean $app -c Release -r $rid -v q
-        $folder = Join-Path $stage "$rid-single"
-        if (Test-Path $folder) { Remove-Item -Recurse -Force $folder }
-        Invoke-Dotnet publish $app @common -r $rid '-p:SingleFile=true' -o $folder
-        Copy-Item (Join-Path $folder 'NockMon.exe') (Join-Path $out "NockMon-$version-$arch.exe")
-        Invoke-Dotnet clean $app -c Release -r $rid -v q
     }
 }
 

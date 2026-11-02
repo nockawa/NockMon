@@ -53,11 +53,17 @@ public sealed class AppSettings
     /// <summary>Agents may change layouts, through an edit session the user reviews (Done/Cancel). Off by default.</summary>
     public bool AgentLayoutChanges { get; set; }
 
+    /// <summary>The Hardware sensors plugin was suggested once (main window): not again.</summary>
+    public bool SensorsSuggested { get; set; }
+
     /// <summary>Main window placement in normal mode (at last close or when entering compact mode); null = default size.</summary>
     public WindowPlacementSettings? Window { get; set; }
 
     /// <summary>Main window placement in compact mode (when leaving it, or at close); null = keep the normal one.</summary>
     public WindowPlacementSettings? CompactWindow { get; set; }
+
+    /// <summary>A day: about 170 000 samples per series at the fastest interval.</summary>
+    public const int MaxHistoryMinutes = 24 * 60;
 
     /// <summary>Sampling options from these settings, clamped to valid values.</summary>
     [JsonIgnore]
@@ -65,9 +71,10 @@ public sealed class AppSettings
     {
         get
         {
-            var interval = TimeSpan.FromMilliseconds(Math.Max(SampleIntervalMs, SamplingOptions.MinInterval.TotalMilliseconds));
-            var scan = TimeSpan.FromMilliseconds(Math.Max(ScanIntervalMs, interval.TotalMilliseconds));
-            var retention = TimeSpan.FromMinutes(Math.Max(HistoryMinutes, 1));
+            // Upper bounds too: a hand-edited file must not size the history rings beyond memory.
+            var interval = TimeSpan.FromMilliseconds(Math.Clamp(SampleIntervalMs, SamplingOptions.MinInterval.TotalMilliseconds, 60_000));
+            var scan = TimeSpan.FromMilliseconds(Math.Clamp(ScanIntervalMs, interval.TotalMilliseconds, 600_000));
+            var retention = TimeSpan.FromMinutes(Math.Clamp(HistoryMinutes, 1, MaxHistoryMinutes));
             return new SamplingOptions(interval, scan, retention < scan * 2 ? scan * 2 : retention);
         }
     }

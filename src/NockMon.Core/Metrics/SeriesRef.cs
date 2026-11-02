@@ -9,9 +9,14 @@ namespace NockMon.Core.Metrics;
 [JsonDerivedType(typeof(ProcessSeries), "process")]
 [JsonDerivedType(typeof(ObjectTypeSeries), "objectType")]
 [JsonDerivedType(typeof(GpuSeries), "gpu")]
+[JsonDerivedType(typeof(FolderSeries), "folder")]
+[JsonDerivedType(typeof(PluginSeries), "plugin")]
 public abstract record SeriesRef
 {
     public abstract MetricInfo Info { get; }
+
+    /// <summary>The unit alone (renderers read it every frame: no <see cref="Info"/> built for it).</summary>
+    public virtual MetricUnit Unit => Info.Unit;
 
     /// <summary>Label used when the user gave none.</summary>
     public abstract string DefaultLabel { get; }
@@ -61,7 +66,45 @@ public sealed record ObjectTypeSeries(string TypeName, ObjectTypeMetric Metric) 
     public override MetricInfo Info => new($"{TypeName} {(Metric == ObjectTypeMetric.Objects ? "objects" : "handles")}",
         Metric == ObjectTypeMetric.Objects ? "Objects" : "Handles", MetricUnit.Count, true);
 
+    public override MetricUnit Unit => MetricUnit.Count;
+
     public override string DefaultLabel => Info.DisplayName;
+}
+
+public enum FolderMetric
+{
+    Size,
+    Files,
+    Folders,
+}
+
+/// <summary>
+/// A folder's size, file count or subfolder count, scanned in the background while a layout uses it (see
+/// <see cref="Folders.FolderScanner"/>). The scan options are part of the series: the same path with other filters is
+/// another series.
+/// </summary>
+public sealed record FolderSeries(FolderMetric Metric, string Path, bool Recursive = true, string? Include = null, string? Exclude = null,
+    bool SizeOnDisk = false) : SeriesRef
+{
+    [JsonIgnore] public Folders.FolderScope Scope => new(Path, Recursive, Include, Exclude, SizeOnDisk);
+
+    public override MetricInfo Info => Folders.FolderScope.Info(Metric);
+    public override string DefaultLabel => $"{Scope.Name} {Info.ShortName.ToLowerInvariant()}";
+}
+
+/// <summary>
+/// A metric of a plugin's metric source (SDK <c>IMetricPlugin</c>), by ids: a layout keeps it while the plugin is
+/// missing, and it works again once the plugin is back. Recorded from the first sample the source gave a value.
+/// </summary>
+public sealed record PluginSeries(string Plugin, string Source, string Metric) : SeriesRef
+{
+    public override MetricInfo Info => ExternalMetricCatalog.Find(Plugin, Source, Metric) is { } m
+        ? new MetricInfo(m.Name, m.ShortName, m.Unit, true)
+        : new MetricInfo($"{Metric} (plugin {Plugin} not loaded)", Metric, MetricUnit.Count, true);
+
+    public override MetricUnit Unit => ExternalMetricCatalog.Find(Plugin, Source, Metric)?.Unit ?? MetricUnit.Count;
+
+    public override string DefaultLabel => ExternalMetricCatalog.Find(Plugin, Source, Metric)?.Name ?? Metric;
 }
 
 /// <summary>Sum of <paramref name="Field"/> over all processes whose image name matches <paramref name="Pattern"/> (see <see cref="Model.NamePattern"/>).</summary>

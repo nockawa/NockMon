@@ -227,15 +227,17 @@ public sealed class AgentTests : IDisposable
         server.SessionsChanged += () => Interlocked.Increment(ref changes);
         server.Start();
 
-        await using (var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous))
+        await using (var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, // As the relays: identification only, owner checked.
+                   System.IO.Pipes.PipeOptions.Asynchronous, System.Security.Principal.TokenImpersonationLevel.Identification))
         {
             await pipe.ConnectAsync(5000, TestContext.Current.CancellationToken);
+            Assert.True(AgentPipeServer.IsOwnedByCurrentUser(pipe)); // Elevated or not: compared with the user SID.
             await using var client = await McpClient.CreateAsync(new StreamClientTransport(pipe, pipe),
                 new McpClientOptions { ClientInfo = new Implementation { Name = "test-agent", Version = "1" } },
                 cancellationToken: TestContext.Current.CancellationToken);
             var overview = await client.CallToolAsync("get_overview", cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotEqual(true, overview.IsError);
-            Assert.Equal(["test-agent"], server.Clients);
+            Assert.Equal(["AI agent 'test-agent'"], server.Clients); // Marked as the agent's own words.
 
             // A second server on the same name (an impersonator, or a second instance) must not start.
             using var squatter = new AgentPipeServer(() => new MonitorTools(Queries).CreateServerOptions("1.0"), name);
@@ -252,9 +254,29 @@ public sealed class AgentTests : IDisposable
     [Fact]
     public void PipeSecurity_DeniesNetworkBeforeAllowingTheUser()
     {
-        var sddl = AgentPipeServer.SecurityDescriptor("S-1-5-21-1-2-3-1001");
-        Assert.StartsWith("D:P(D;;GA;;;NU)(A;;GA;;;S-1-5-21-1-2-3-1001)", sddl);
-        Assert.EndsWith("S:(ML;;NW;;;ME)", sddl);
+        var sddl = AgentPipeServer.SecurityDescriptor("S-1-5-21-1-2-3-1001", elevated: true);
+        Assert.StartsWith("O:S-1-5-21-1-2-3-1001D:P(D;;GA;;;NU)(A;;0x12019b;;;S-1-5-21-1-2-3-1001)(A;;0x12019b;;;OW)", sddl);
+        Assert.Contains("(A;;GA;;;BA)", sddl);
+        Assert.EndsWith("S:(ML;;NWNR;;;ME)", sddl);
+    }
+
+    [Fact]
+    public void PipeSecurity_ElevatedServer_UserCannotCreateInstancesNorChangeTheDacl()
+    {
+        var user = new System.Security.Principal.SecurityIdentifier("S-1-5-21-1-2-3-1001");
+        var descriptor = new System.Security.AccessControl.RawSecurityDescriptor(AgentPipeServer.SecurityDescriptor(user.Value, elevated: true));
+
+        Assert.Equal(user, descriptor.Owner);
+        foreach (var ace in descriptor.DiscretionaryAcl.OfType<System.Security.AccessControl.CommonAce>())
+        {
+            if (ace.AceQualifier != System.Security.AccessControl.AceQualifier.AccessAllowed)
+                continue;
+            if (ace.SecurityIdentifier == user || ace.SecurityIdentifier.Value == "S-1-3-4") // OWNER RIGHTS
+            {
+                const int createInstance = 0x4, writeDac = 0x40000, writeOwner = 0x80000;
+                Assert.Equal(0, ace.AccessMask & (createInstance | writeDac | writeOwner));
+            }
+        }
     }
 
     private static string Text(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(c => c.Text));

@@ -37,6 +37,8 @@ public sealed partial class ProcessEventsWidget : UserControl, IMonitorWidget
         Content = _table;
     }
 
+    private string? _status; // Shown instead of events while kernel events are unavailable.
+
     public event Action? ConfigChanged
     {
         add { }
@@ -48,8 +50,20 @@ public sealed partial class ProcessEventsWidget : UserControl, IMonitorWidget
         var source = _monitor.Engine.KernelEvents;
         if (source is not { Status: null })
         {
-            _table.SetCell(0, 2, source?.Status ?? "Kernel events are not enabled.");
+            var status = source?.Status ?? "Kernel events are not enabled.";
+            if (status != _status)
+            {
+                _table.ClearFrom(0); // The status alone, not over old events.
+                _table.SetCell(0, 2, status);
+                _status = status;
+            }
             return;
+        }
+        if (_status is not null)
+        {
+            _status = null;
+            _table.ClearFrom(0); // Then the events (if any) replace the status at once.
+            _lastNewest = null;
         }
 
         source.CopyRecentEvents(_events);

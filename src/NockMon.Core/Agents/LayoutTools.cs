@@ -33,7 +33,7 @@ public sealed class LayoutTools(LayoutAgent agent, IUiDispatcher ui)
         .Where(m => m.GetCustomAttribute<McpServerToolAttribute>() is not null)
         .Select(m => McpServerTool.Create(m, this, new McpServerToolCreateOptions { SerializerOptions = AgentJson.Options }));
 
-    private static string Client(McpServer server) => server.ClientInfo?.Title ?? server.ClientInfo?.Name ?? "An AI agent";
+    private static string Client(McpServer server) => AgentPipeServer.DisplayName(server);
 
     [McpServerTool(Name = "list_layouts", Title = "Layouts", ReadOnly = true, OpenWorld = false)]
     [Description("The layouts (name, page and widget counts), which one is shown and on which page, the edit state, and the visible board area in cells.")]

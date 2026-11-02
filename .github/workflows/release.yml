@@ -1,7 +1,8 @@
-# Pushing a tag v<major>.<minor>.<patch>[-<prerelease>] builds, tests and publishes a release:
-#   GitHub release (installers, single-file executables, SHA256SUMS.txt), nuget.org (dotnet tool, plugin SDK when its
-#   version is new), winget (stable versions, when the WINGET_TOKEN secret is set).
+# Pushing a tag v<major>.<minor>.<patch>[-<prerelease>] on a commit of main builds, tests and publishes a release:
+#   GitHub release (installers, SHA256SUMS.txt), nuget.org (dotnet tool, plugin SDK when its version is new), winget
+#   (stable versions, when the WINGET_TOKEN secret is set).
 # Pull requests and manual runs build and test everything and publish nothing (the artifacts stay on the run).
+# Actions are pinned by commit (a moved tag cannot change what runs with the release permissions).
 name: Release
 
 on:
@@ -19,15 +20,30 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # In parallel with the build: the release waits for both.
+  test:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+
+      - name: Test
+        run: dotnet test --solution NockMon.slnx -c Release
+
   build:
     runs-on: windows-2025
     outputs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # The tag check needs main's history.
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 
@@ -40,22 +56,57 @@ jobs:
             if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
               throw "Tag $env:GITHUB_REF_NAME is not v<major>.<minor>.<patch>[-<prerelease>]."
             }
+            # A release is built from main only: a tag on a branch commit would publish unreviewed code.
+            git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+            if ($LASTEXITCODE -ne 0) { throw "Tag $env:GITHUB_REF_NAME is not on main." }
           } else {
             $version = ([xml](Get-Content src/NockMon.Launcher/NockMon.Launcher.csproj)).Project.PropertyGroup.Version |
               Where-Object { $_ } | Select-Object -First 1
+            if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Version '$version' is not <major>.<minor>.<patch>[-<prerelease>]." }
           }
           "version=$version" >> $env:GITHUB_OUTPUT
           "prerelease=$(([string]$version.Contains('-')).ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           Write-Host "NockMon $version"
 
-      - name: Test
-        run: dotnet test --solution NockMon.slnx -c Release
+      # The SDK is pushed with --skip-duplicate (re-runnable, and published only when its version is new): SDK changes
+      # left under an already published version would silently not ship.
+      - name: SDK version check
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $previous = git describe --tags --abbrev=0 --match 'v*' "$env:GITHUB_SHA^" 2>$null
+          if (-not $previous) { exit 0 }
+          git diff --quiet $previous $env:GITHUB_SHA -- src/NockMon.Sdk
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          $version = { param($xml) ([xml]$xml).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1 }
+          $old = & $version (git show "${previous}:src/NockMon.Sdk/NockMon.Sdk.csproj" | Out-String)
+          $new = & $version (Get-Content src/NockMon.Sdk/NockMon.Sdk.csproj -Raw)
+          if ($old -eq $new) { throw "src/NockMon.Sdk changed since $previous but its version is still $new: bump it." }
+          Write-Host "NockMon.Sdk $old -> $new"
 
+      # Pull requests check that everything builds: x64 only (ARM64 is the same code, and doubles the time).
       - name: Build release artifacts
         shell: pwsh
-        run: tools/release/build.ps1 -Version ${{ steps.version.outputs.version }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $architectures = if ($env:GITHUB_EVENT_NAME -eq 'pull_request') { @('x64') } else { @('x64', 'arm64') }
+          tools/release/build.ps1 -Version $env:VERSION -Architectures $architectures
 
-      - uses: actions/upload-artifact@v7
+      # Real plugins built against the SDK just packed: SDK changes are checked before they ship.
+      - name: Plugins against this SDK
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $sdk = ([xml](Get-Content src/NockMon.Sdk/NockMon.Sdk.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          $source = (Resolve-Path "artifacts/release/$env:VERSION/nuget").Path
+          foreach ($plugin in 'samples/ClaudeUsage.NockMon', 'samples/HardwareSensors.NockMon') {
+            dotnet build $plugin -c Release "-p:NockMonSdkVersion=$sdk" "-p:RestoreAdditionalProjectSources=$source"
+            if ($LASTEXITCODE -ne 0) { throw "$plugin does not build against NockMon.Sdk $sdk ($LASTEXITCODE)." }
+          }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release
           path: artifacts/release/${{ steps.version.outputs.version }}/
@@ -63,7 +114,7 @@ jobs:
           retention-days: 14
 
   publish:
-    needs: build
+    needs: [build, test]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: windows-2025
     # Required reviewers on this environment (repository settings) gate every publication; the nuget.org trusted
@@ -75,11 +126,8 @@ jobs:
     env:
       VERSION: ${{ needs.build.outputs.version }}
       PRERELEASE: ${{ needs.build.outputs.prerelease }}
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release
           path: release
@@ -87,6 +135,9 @@ jobs:
       # Re-runnable: a release that already exists gets its files replaced.
       - name: GitHub release
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           $tag = "v$env:VERSION"
           $files = @(Get-ChildItem release/*.exe | ForEach-Object FullName) + (Resolve-Path release/SHA256SUMS.txt).Path
@@ -102,20 +153,18 @@ jobs:
       # Short-lived API key (1 hour) from the trusted publishing policy: no stored secret.
       - name: NuGet login
         id: nuget
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
         with:
           user: nockawa
 
-      # The tool's RID-specific packages before the main one (it points at them); the SDK is pushed only when its
-      # version is new (--skip-duplicate, which also makes a re-run safe).
+      # The SDK is pushed only when its version is new (--skip-duplicate, which also makes a re-run safe).
       - name: NuGet push
         shell: pwsh
         env:
           NUGET_API_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}
         run: |
           $packages = Get-ChildItem release/nuget/*.nupkg
-          $ordered = @($packages | Where-Object Name -like 'NockMon.win-*') +
-                     @($packages | Where-Object Name -eq "NockMon.$env:VERSION.nupkg") +
+          $ordered = @($packages | Where-Object Name -eq "NockMon.$env:VERSION.nupkg") +
                      @($packages | Where-Object Name -like 'NockMon.Sdk.*')
           if ($ordered.Count -ne $packages.Count) { throw "Unexpected packages: $($packages.Name -join ', ')" }
           foreach ($package in $ordered) {
@@ -123,12 +172,34 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Push of $($package.Name) failed ($LASTEXITCODE)." }
           }
 
-      # Pull request to microsoft/winget-pkgs (reviewed and merged by its moderators). Stable versions only.
-      - name: winget
-        if: env.PRERELEASE == 'false' && env.WINGET_TOKEN != ''
+  # Pull request to microsoft/winget-pkgs (reviewed and merged by its moderators). Stable versions only. A job of its own:
+  # the downloaded tool runs without the release's write token or OIDC, with only the winget token, pinned and hashed.
+  winget:
+    needs: [build, publish]
+    if: needs.build.outputs.prerelease == 'false'
+    runs-on: windows-2025
+    environment: release # WINGET_TOKEN lives there.
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      WINGETCREATE_URL: https://github.com/microsoft/winget-create/releases/download/v1.12.13.0/wingetcreate.exe
+      WINGETCREATE_SHA256: 24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release
+          path: release
+
+      - name: Submit
         shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: |
-          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          if (-not $env:WINGET_TOKEN) { Write-Host 'WINGET_TOKEN not set: skipped.'; exit 0 }
+          Invoke-WebRequest $env:WINGETCREATE_URL -OutFile wingetcreate.exe
+          $hash = (Get-FileHash wingetcreate.exe -Algorithm SHA256).Hash
+          if ($hash -ne $env:WINGETCREATE_SHA256) { throw "wingetcreate.exe hash mismatch ($hash)." }
           ./wingetcreate.exe submit --no-open --prtitle "New version: Nockawa.NockMon version $env:VERSION" `
             --token $env:WINGET_TOKEN "release/winget/manifests/n/Nockawa/NockMon/$env:VERSION"
           if ($LASTEXITCODE -ne 0) { throw "wingetcreate failed ($LASTEXITCODE)." }

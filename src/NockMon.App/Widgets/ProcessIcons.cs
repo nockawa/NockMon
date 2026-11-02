@@ -16,7 +16,16 @@ internal static unsafe partial class ProcessIcons
     private const int MaxInstances = 4096;
 
     private static readonly Dictionary<(int Pid, long CreateTime), string?> Paths = [];
-    private static readonly Dictionary<(string Path, int Size), ImageSource?> Icons = [];
+    private static readonly Dictionary<(string Path, int Size), ImageSource?> Icons = new(new PathSizeComparer());
+
+    /// <summary>Paths compared ignoring case without lowering a copy per row and scan.</summary>
+    private sealed class PathSizeComparer : IEqualityComparer<(string Path, int Size)>
+    {
+        public bool Equals((string Path, int Size) a, (string Path, int Size) b) =>
+            a.Size == b.Size && string.Equals(a.Path, b.Path, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode((string Path, int Size) key) => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(key.Path), key.Size);
+    }
     private static readonly Dictionary<int, ImageSource?> DefaultIcons = [];
 
     public static ImageSource? Get(int pid, long createTime, int pixelSize)
@@ -30,7 +39,7 @@ internal static unsafe partial class ProcessIcons
         if (path is null)
             return null;
 
-        var key = (path.ToLowerInvariant(), pixelSize);
+        var key = (path, pixelSize);
         if (!Icons.TryGetValue(key, out var icon))
             Icons[key] = icon = Extract(path, 0, pixelSize) ?? Default(pixelSize);
         return icon;

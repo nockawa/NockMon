@@ -20,6 +20,9 @@ internal sealed class FakeLayoutHost : ILayoutHost, IUiDispatcher
     public int Changes { get; private set; }
     public string? Confirmed { get; private set; }
 
+    /// <summary>Runs while the question is open (other calls the UI thread serves meanwhile).</summary>
+    public Action? WhileConfirming { get; set; }
+
     public bool IsValidIcon(string name) => name is "board" or "gauge" or "server";
     public void AgentEditStarted(string client) => EditsStarted.Add(client);
     public void LayoutChanged() => Changes++;
@@ -27,6 +30,7 @@ internal sealed class FakeLayoutHost : ILayoutHost, IUiDispatcher
     public Task<bool> ConfirmAsync(string title, string message, string accept)
     {
         Confirmed = message;
+        WhileConfirming?.Invoke();
         return Task.FromResult(Confirm);
     }
 
@@ -184,6 +188,16 @@ public sealed class LayoutAgentTests : IDisposable
         Assert.True(deleted);
         Assert.Equal(["Gaming"], layouts.Layouts.Select(l => l.Name));
         Assert.Throws<AgentException>(() => _agent.SwitchLayout("Default"));
+
+        // Renamed, and another created under its name, while the user was asked: the confirmed layout is not that one.
+        _agent.CreateLayout("Work", copyCurrent: false);
+        _host.WhileConfirming = () =>
+        {
+            _session.Rename("Old work");
+            _agent.CreateLayout("Work", copyCurrent: false); // Same name, another layout.
+        };
+        await Assert.ThrowsAsync<AgentException>(() => _agent.DeleteLayoutAsync("Work", "Claude Code"));
+        Assert.Contains("Work", _session.Names);
     }
 
     [Fact]
@@ -232,7 +246,7 @@ public sealed class LayoutAgentTests : IDisposable
                 new Dictionary<string, object?> { ["widget"] = JsonSerializer.Deserialize<JsonElement>(Value) }, cancellationToken: cancel);
             Assert.NotEqual(true, add.IsError);
             Assert.Contains("Chrome CPU", string.Concat(add.Content.OfType<TextContentBlock>().Select(c => c.Text)));
-            Assert.Equal(["Claude Code"], _host.EditsStarted);
+            Assert.Equal(["AI agent 'Claude Code'"], _host.EditsStarted);
 
             var layout = await client.CallToolAsync("get_layout", cancellationToken: cancel);
             Assert.Contains("\"$type\":\"value\"", string.Concat(layout.Content.OfType<TextContentBlock>().Select(c => c.Text)));

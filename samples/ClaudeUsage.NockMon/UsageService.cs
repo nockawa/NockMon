@@ -83,6 +83,19 @@ public static class UsageService
 
     private static async Task LoopAsync(CancellationToken cancel)
     {
+        // A restarted loop (the last widget re-created: page switch, edit) resumes the schedule: the endpoint is rate
+        // limited. The refresh button still fetches at once.
+        if (_state.NextAttempt - DateTimeOffset.UtcNow is { } pending && pending > TimeSpan.Zero)
+        {
+            try
+            {
+                await _wake.WaitAsync(pending, cancel);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
         var failures = 0;
         while (!cancel.IsCancellationRequested)
         {
@@ -199,14 +212,23 @@ public static class UsageService
     /// <summary>The API jitters resets_at by milliseconds; a rollover moves it by a whole week.</summary>
     private static bool SameWindow(DateTimeOffset a, DateTimeOffset b) => Math.Abs((a - b).TotalMinutes) < 10;
 
+    private static readonly Lock HistoryGate = new();
+
+    /// <summary>Locked: a loop being cancelled may still finish a fetch while its replacement starts.</summary>
     private static List<Sample> Record(WeeklyWindow weekly, DateTimeOffset at)
+    {
+        lock (HistoryGate)
+            return RecordLocked(weekly, at);
+    }
+
+    private static List<Sample> RecordLocked(WeeklyWindow weekly, DateTimeOffset at)
     {
         _history ??= LoadHistory();
         if (_history.Count == 0 || _history[^1].At < at)
             _history.Add(new Sample(at, weekly.UtilPct, weekly.ResetsAt));
         _history.RemoveAll(s => !SameWindow(s.ResetsAt, weekly.ResetsAt) || s.At < at - PaceLookback - TimeSpan.FromHours(1));
         SaveHistory(_history);
-        return _history;
+        return [.. _history]; // A copy: read outside the lock.
     }
 
     /// <summary>
@@ -297,7 +319,7 @@ public static class UsageService
             Directory.CreateDirectory(Path.GetDirectoryName(HistoryPath)!);
             File.WriteAllText(HistoryPath, array.ToJsonString());
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
         }
     }

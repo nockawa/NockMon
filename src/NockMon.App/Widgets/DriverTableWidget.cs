@@ -58,7 +58,11 @@ public sealed partial class DriverTableWidget : UserControl, IMonitorWidget
             }
             return;
         }
-        _status = null;
+        if (_status is not null)
+        {
+            _status = null;
+            _dirty = true; // The status text is in the cells: rewrite them now, not at the next scan.
+        }
 
         var ran = _monitor.Engine.Read(this, static (w, snapshot, _) =>
         {

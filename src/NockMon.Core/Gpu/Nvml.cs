@@ -62,7 +62,17 @@ internal sealed unsafe class Nvml : IDisposable
                 NativeLibrary.Free(library);
                 return null;
             }
-            return new Nvml(library);
+            try
+            {
+                return new Nvml(library);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // An older driver without one of the functions: undo the initialization.
+                ((delegate* unmanaged<int>)NativeLibrary.GetExport(library, "nvmlShutdown"))();
+                NativeLibrary.Free(library);
+                return null;
+            }
         }
         catch (Exception e) when (e is EntryPointNotFoundException or IOException or UnauthorizedAccessException)
         {

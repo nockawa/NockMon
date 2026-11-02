@@ -126,13 +126,57 @@ sealed class UrlEditor(IWidgetContext context) : IPluginSettingsEditor
 The editor appears in the widget's configuration dialog, under the title. A widget that changes its own settings (a
 sort by click, say) calls `context.SaveSettings()`.
 
+### 4. Metrics (optional, API 1.1)
+
+A plugin can also publish **metrics**: NockMon records them in its history at every sample, like its own, and they
+become sources for charts, value widgets and value lists (series source **Plugin** in the editors) and for AI agents
+(`plugin.<plugin>/<source>/<metric id>` in `list_metrics`). Implement `IMetricPlugin`, one per source:
+
+```csharp
+public sealed class WeatherMetrics : IMetricPlugin
+{
+    private static readonly IReadOnlyList<PluginMetric> List =
+        [new("outside", "Outside temperature", "Outside", PluginMetricUnit.Celsius, "Weather")];
+    private double _outside = double.NaN;     // written by the poller, read by TryRead
+    private Timer? _poller;
+
+    public string Id => "weather";
+    public string DisplayName => "Weather";
+
+    public void Start(IPluginContext context) =>
+        _poller = new Timer(_ => _outside = FetchTemperature(), null, TimeSpan.Zero, TimeSpan.FromMinutes(5));
+
+    public IReadOnlyList<PluginMetric> Metrics => List;
+
+    public bool TryRead(IReadOnlyList<PluginMetric> metrics, Span<double> values)
+    {
+        if (!ReferenceEquals(metrics, List))
+            return false;
+        values[0] = _outside;                  // NaN when unknown: NockMon holds the previous value
+        return true;
+    }
+
+    public void Dispose() => _poller?.Dispose();
+}
+```
+
+- `Metrics` and `TryRead` run on NockMon's **sampling thread** at every sample: return at once, from values kept by
+  your own thread or timer. Never block or do I/O there.
+- Return the **same list instance** until the metrics change, then a new one: NockMon compares references, and calls
+  `TryRead` with the list it holds (return false if it is stale).
+- A metric id is stored in layouts with each series: keep it stable for the same quantity.
+- A metric's history starts at its first value. A metric that stops coming is held, then dropped after the retention.
+- [HardwareSensors.NockMon](../samples/HardwareSensors.NockMon) is a complete example.
+
 ## Development loop
 
 1. Build the project. The output folder now holds a `nockmon-plugin.json`: it's a loadable plugin.
 2. In NockMon, **Plugins › Development**, add that folder. Or start NockMon with `nockmon --plugin <output folder>`
    (repeatable).
 3. **Edit › Add widget** lists your widgets.
-4. Rebuild any time: the folder is loaded from a copy, so the build is never locked. Restart NockMon to reload.
+4. Rebuild any time: NockMon loads a snapshot of the folder, kept where only administrators can change it (plugins run
+   as administrator; your build folder can be changed by any program). The snapshot is taken when you add the folder,
+   click **Reload**, or start with `--plugin`: after a rebuild, Reload and restart NockMon.
 
 A development folder takes precedence over an installed copy of the same plugin.
 
@@ -164,8 +208,8 @@ Use [semantic versions](https://semver.org): Browse offers updates when a higher
   state that `Refresh` reads.
 - **A widget instance lives while it's on the board.** It's created when it enters the board and disposed when it
   leaves (layout switch, edit, removal): it may be created and disposed several times per session. Stop timers and background work in `Dispose`; share expensive pollers between instances.
-- **Files**: `IWidgetContext.DataDirectory` is the plugin's own folder (`%LOCALAPPDATA%\NockMon\PluginData\<id>`),
-  shared by its widgets.
+- **Files**: `IWidgetContext.DataDirectory` is the plugin's own folder (`%ProgramData%\NockMon\<user SID>\PluginData\<id>`,
+  writable by administrators only), shared by its widgets.
 - **Dependencies**: the host provides the SDK, the Windows App SDK (WinUI, projections, WebView2), CsWinRT, Win2D and
   the .NET runtime: they're neither copied to the output nor packed. Other dependencies are, and resolve from the
   plugin's folder (each plugin has its own load context).
@@ -221,9 +265,37 @@ A widget kind. Created once at start.
 
 `readonly record struct WidgetSize(int Columns, int Rows)`: a size in board cells.
 
+### `IMetricPlugin : IDisposable` (API 1.1)
+
+A source of metrics. Created once at start, disposed at exit.
+
+| Member | Meaning |
+|---|---|
+| `string Id` | Stable identifier, unique within the plugin (stored in layouts with each metric). |
+| `string DisplayName` | Name in pickers. |
+| `void Start(IPluginContext)` | Called once on the UI thread, before the first read: start producing values in the background. |
+| `IReadOnlyList<PluginMetric> Metrics` | The metrics offered now (sampling thread). The same instance until the list changes. |
+| `bool TryRead(IReadOnlyList<PluginMetric>, Span<double>)` | Writes the latest values in the list's order, NaN when unknown (sampling thread, every sample: must not block). False if the list is stale. |
+
+### `PluginMetric`
+
+`sealed record PluginMetric(string Id, string Name, string ShortName, PluginMetricUnit Unit, string Group)`: `Name` for
+legends and pickers ("RTX 4070 Ti GPU Core"), `ShortName` within its `Group` ("GPU Core" in "NVIDIA GeForce RTX 4070 Ti").
+
+`PluginMetricUnit`: `Count`, `Percent` (0..100), `Celsius`, `Rpm`, `Volts`, `Amperes`, `Watts`, `Megahertz`,
+`Milliseconds`, `Bytes`, `BytesPerSecond`, `PerSecond`.
+
+### `IPluginContext`
+
+| Member | Meaning |
+|---|---|
+| `string DataDirectory` | The plugin's folder for its own files (shared with its widgets). |
+| `Version HostVersion` | Version of the running NockMon. |
+
 ### `PluginApi`
 
-`PluginApi.Version`: the plugin API version the host implements (major.minor).
+`PluginApi.Version`: the plugin API version the host implements (major.minor). 1.1 adds metric sources
+(`IMetricPlugin`); a 1.0 plugin loads unchanged.
 
 ## How it works
 
@@ -231,7 +303,8 @@ A widget kind. Created once at start.
   assembly, plugin API version, title, description, authors, project URL.
 - **Versioning**: the host loads plugins built against the same major version of the plugin API and a lower or equal
   minor. The API version is the SDK package's major.minor.
-- **Install**: a package is extracted to `%LOCALAPPDATA%\NockMon\Plugins\<id>\<version>\`; updates and removals are
+- **Install**: a package is extracted to `%ProgramData%\NockMon\<user SID>\Plugins\<id>\<version>\` (administrators
+  only: plugins run as administrator, so nothing else may plant or change their files); updates and removals are
   applied at the next start, before anything loads.
 - **Loading**: each plugin gets its own `AssemblyLoadContext`; the host's assemblies (SDK, Windows App SDK) are shared,
   the plugin's dependencies are its own.
