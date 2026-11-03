@@ -8,7 +8,7 @@ using Microsoft.UI.Xaml.Media;
 namespace ClaudeUsage.NockMon;
 
 /// <summary>
-/// The news bell, at the widget's bottom right: hidden while nothing is unread in the widget's categories; otherwise the
+/// The news bell, at the widget's bottom right (after the status badge): hidden while nothing is unread in the widget's categories; otherwise the
 /// count, and a list to follow (an item opened is read) or dismiss at once.
 /// </summary>
 internal sealed partial class NewsBell : Button
@@ -25,9 +25,6 @@ internal sealed partial class NewsBell : Button
         Padding = new Thickness(6, 2, 6, 2);
         MinWidth = 0;
         MinHeight = 0;
-        HorizontalAlignment = HorizontalAlignment.Right;
-        VerticalAlignment = VerticalAlignment.Bottom;
-        Margin = new Thickness(0, 0, 6, 4);
         Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"];
         Content = new StackPanel
         {

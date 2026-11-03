@@ -13,6 +13,7 @@ public sealed class WeeklyWidgetPlugin : IWidgetPlugin
 {
     internal const string RefreshSetting = "refreshMinutes";
     internal const string NewsSetting = "newsCategories";
+    internal const string StatusSetting = "serviceStatus";
     internal const int DefaultRefreshMinutes = 10;
 
     public string Id => "weekly";
@@ -31,6 +32,8 @@ public sealed class WeeklyWidgetPlugin : IWidgetPlugin
         **Source:** the OAuth token the Claude CLI stored (`CLAUDE_CODE_OAUTH_TOKEN`, else `~/.claude/.credentials.json`) and Anthropic's **unofficial** usage endpoint, the one the CLI uses: it can change without notice. Polled every few minutes (setting); while claude-usage runs, its fresh cache is used instead. All widgets share one poller.
 
         **News:** a bell at the bottom right counts the unread Claude and Anthropic news in the categories ticked in the settings (by default: models, pricing and plans; Claude Code's weekly highlights). Click it for the list: an item you open is read, **Mark all as read** dismisses them. Sources: the Claude Platform release notes, sorted into categories by the documentation they link to; Claude Code's What's new and changelog. Checked every 30 minutes; what was published before the widget first checked a source counts as read.
+
+        **Service status:** while a Claude service is not fully functional, a warning icon shows at the bottom right: yellow (degraded performance, maintenance, minor incident), orange (partial outage, major incident), red (major outage, critical incident). Click it for the affected services and the open incidents with their latest update. Source: the public [status.claude.com](https://status.claude.com) page, checked every 2 minutes (a check whose page hasn't changed costs a 304). No icon while all is well, or when the page couldn't be read for 30 minutes. Can be turned off in the settings.
         """;
 
     public WidgetSize DefaultSize => new(4, 4);
@@ -52,10 +55,15 @@ public sealed class WeeklyWidgetPlugin : IWidgetPlugin
                 .OfType<NewsCategory>().ToHashSet()
             : NewsFeeds.Categories.Where(c => c.Default).Select(c => c.Category).ToHashSet();
 
+    /// <summary>Whether the widget shows Claude's service status; on until the settings say otherwise.</summary>
+    internal static bool ShowsStatus(IWidgetContext context) =>
+        context.Settings[StatusSetting] is not { } node || node.GetValueKind() != System.Text.Json.JsonValueKind.False;
+
     private sealed class SettingsEditor : IPluginSettingsEditor
     {
         private readonly IWidgetContext _context;
         private readonly NumberBox _minutes;
+        private readonly CheckBox _status;
         private readonly List<(NewsCategory Category, CheckBox Box)> _news = [];
 
         public SettingsEditor(IWidgetContext context)
@@ -71,6 +79,7 @@ public sealed class WeeklyWidgetPlugin : IWidgetPlugin
                 HorizontalAlignment = HorizontalAlignment.Left,
                 MinWidth = 160,
             };
+            _status = new CheckBox { Content = "Show Claude's service status", IsChecked = ShowsStatus(context), MinHeight = 28, Padding = new Thickness(6, 4, 0, 0) };
             var panel = new StackPanel
             {
                 Spacing = 6,
@@ -78,6 +87,9 @@ public sealed class WeeklyWidgetPlugin : IWidgetPlugin
                 {
                     _minutes,
                     Hint("The usage endpoint is rate limited: a few minutes is plenty (the window spans a week). Widgets share one poller at the shortest interval."),
+                    new TextBlock { Text = "Service status", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 10, 0, 0) },
+                    Hint("A warning icon at the bottom right while a Claude service is not fully functional: yellow to red with the severity. From status.claude.com, checked every 2 minutes."),
+                    _status,
                     new TextBlock { Text = "Claude news", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 10, 0, 0) },
                     Hint("A bell at the bottom right counts the unread news of the ticked categories. None ticked: no bell."),
                 },
@@ -100,6 +112,7 @@ public sealed class WeeklyWidgetPlugin : IWidgetPlugin
             if (double.IsNaN(_minutes.Value))
                 return "Enter a refresh interval in minutes.";
             _context.Settings[RefreshSetting] = (int)Math.Clamp(_minutes.Value, 2, 120);
+            _context.Settings[StatusSetting] = _status.IsChecked == true;
             _context.Settings[NewsSetting] = new JsonArray(_news.Where(n => n.Box.IsChecked == true).Select(n => (JsonNode)n.Category.ToString()).ToArray());
             return null;
         }
@@ -116,7 +129,9 @@ internal sealed class WeeklyWidget : IPluginWidget
 
     private readonly IDisposable _subscription;
     private readonly IDisposable? _newsSubscription;
+    private readonly IDisposable? _statusSubscription;
     private readonly NewsBell _bell;
+    private readonly StatusBadge? _badge;
     private readonly Grid _bars = new() { ColumnSpacing = 8, RowSpacing = 4 };
     private readonly TextBlock _usedLabel = Label("Used");
     private readonly TextBlock _elapsedLabel = Label("Elapsed");
@@ -134,6 +149,7 @@ internal sealed class WeeklyWidget : IPluginWidget
     private readonly TextBlock _footer = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Opacity = 0.65 };
     private readonly UIElement[] _paceRows;
     private readonly StackPanel _data;
+    private readonly StackPanel _corner;
     private readonly TextBlock _empty = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap, Opacity = 0.7, Text = "Reading your Claude usage…" };
 
     public WeeklyWidget(IWidgetContext context)
@@ -142,6 +158,11 @@ internal sealed class WeeklyWidget : IPluginWidget
         var news = WeeklyWidgetPlugin.NewsCategories(context);
         _newsSubscription = news.Count > 0 ? NewsService.Subscribe(context.DataDirectory, news) : null;
         _bell = new NewsBell(news);
+        if (WeeklyWidgetPlugin.ShowsStatus(context))
+        {
+            _statusSubscription = StatusService.Subscribe();
+            _badge = new StatusBadge();
+        }
 
         _bars.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         _bars.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -183,7 +204,18 @@ internal sealed class WeeklyWidget : IPluginWidget
             Padding = new Thickness(10, 0, 10, 2),
             Content = new StackPanel { Spacing = 6, Children = { _empty, _data, _footer } },
         };
-        View = new Grid { Children = { content, _bell } };
+        _corner = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 2,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 6, 4),
+        };
+        if (_badge is not null)
+            _corner.Children.Add(_badge);
+        _corner.Children.Add(_bell);
+        View = new Grid { Children = { content, _corner } };
         _data.Visibility = Visibility.Collapsed;
     }
 
@@ -192,8 +224,9 @@ internal sealed class WeeklyWidget : IPluginWidget
     public void Refresh()
     {
         _bell.Refresh();
-        // The footer's text stops before the bell (bottom right) while it shows.
-        var footerRight = _bell.Visibility == Visibility.Visible ? 40 : 0;
+        _badge?.Refresh();
+        // The footer's text stops before the bell and the badge (bottom right) while they show.
+        var footerRight = (_bell.Visibility == Visibility.Visible ? 40 : 0) + (_badge?.Visibility == Visibility.Visible ? 30 : 0);
         if (_footer.Margin.Right != footerRight)
             _footer.Margin = new Thickness(0, 0, footerRight, 0);
 
@@ -305,6 +338,7 @@ internal sealed class WeeklyWidget : IPluginWidget
     {
         _subscription.Dispose();
         _newsSubscription?.Dispose();
+        _statusSubscription?.Dispose();
     }
 
     private static void AddRow(Grid grid, int row, params FrameworkElement[] cells)

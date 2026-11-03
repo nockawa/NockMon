@@ -12,10 +12,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
 
     <PackageId>ClaudeUsage.NockMon</PackageId>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <Title>Claude Usage</Title>
     <Authors>nockawa</Authors>
-    <Description>NockMon widget: your Claude subscription's weekly usage — used vs. elapsed, on pace / ahead / behind, reset countdown, burn pace vs. target. From the claude-usage tool.</Description>
+    <Description>NockMon widget: your Claude subscription's weekly usage — used vs. elapsed, on pace / ahead / behind, reset countdown, burn pace vs. target, Claude's service status and news. From the claude-usage tool.</Description>
     <PackageTags>nockmon;nockmon-plugin;claude;anthropic;usage</PackageTags>
     <PackageProjectUrl>https://github.com/nockawa/NockMon/tree/main/samples/ClaudeUsage.NockMon</PackageProjectUrl>
     <RepositoryUrl>https://github.com/nockawa/NockMon.git</RepositoryUrl>

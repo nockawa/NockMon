@@ -378,7 +378,12 @@ internal static class WidgetEditor
         {
             var editor = new SeriesEditor(source, null, null, context, showLabelAndColor: false);
             var remove = new Button { Content = new FontIcon { Glyph = "", FontSize = 12 }, VerticalAlignment = VerticalAlignment.Bottom };
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { editor, remove } };
+            var row = new Grid { ColumnSpacing = 8 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(remove, 1);
+            row.Children.Add(editor);
+            row.Children.Add(remove);
             remove.Click += (_, _) =>
             {
                 editors.Remove(editor);
@@ -461,9 +466,9 @@ internal static class WidgetEditor
         return picker;
     }
 
-    private static StackPanel Row(params UIElement[] children)
+    private static WrapPanel Row(params UIElement[] children)
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+        var row = new WrapPanel { Spacing = 16 };
         foreach (var child in children)
             row.Children.Add(child);
         return row;

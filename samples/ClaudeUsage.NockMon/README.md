@@ -8,6 +8,7 @@ A [NockMon](https://github.com/nockawa/NockMon) plugin that shows the **Weekly**
 - **Ahead / On pace / Behind**, and by how much
 - **Resets in** countdown
 - **Pace** (burn over the last 24 h) vs. **Target** (what you can burn per day until the reset)
+- **Service status**: a warning icon at the bottom right, yellow to red, while a Claude service is not fully functional; click it for the affected services and open incidents
 - **Claude news**: a bell at the bottom right counts unread Claude and Anthropic news; click it for the list
 
 ## News
@@ -27,6 +28,21 @@ ticked in its settings:
 Release notes are sorted by the documentation each one links to (and a few phrases), so a launch or a price change
 isn't drowned among admin and cloud-provider updates. What was published before the widget first checked a source
 counts as read. An item you open is read; **Mark all as read** dismisses the list.
+
+## Service status
+
+The public [status.claude.com](https://status.claude.com) summary, as claude-usage reads it, checked every 2 minutes
+(conditional requests: an unchanged page costs a 304). The icon's color is the worst of the page's indicator, its
+components and its open incidents:
+
+| Color | When |
+|---|---|
+| Yellow | Degraded performance, maintenance, minor incident (or an incident of no declared impact) |
+| Orange | Partial outage, major incident |
+| Red | Major outage, critical incident |
+
+No icon while everything is operational, or when the page couldn't be read for 30 minutes. Each widget can turn it
+off in its settings.
 
 ## Install
 

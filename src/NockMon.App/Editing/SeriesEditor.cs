@@ -93,12 +93,12 @@ internal sealed class SeriesEditor : StackPanel
             });
         }
 
-        Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _scope, _adapter, _group, _metric } });
-        Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _core, _pattern, _objectType, _engine } });
+        Children.Add(new WrapPanel { Children = { _scope, _adapter, _group, _metric } });
+        Children.Add(new WrapPanel { Children = { _core, _pattern, _objectType, _engine } });
         Children.Add(_folder);
         Children.Add(_doc);
         if (showLabelAndColor)
-            Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _label, _color } });
+            Children.Add(new WrapPanel { Children = { _label, _color } });
 
         Load(source);
         _label.Text = label ?? "";
