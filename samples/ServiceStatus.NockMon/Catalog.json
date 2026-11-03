@@ -1,0 +1,278 @@
+[
+  {
+    "id": "aws",
+    "name": "AWS",
+    "kind": "Aws",
+    "url": "https://health.aws.amazon.com/public/currentevents",
+    "page": "https://health.aws.amazon.com/health/status"
+  },
+  {
+    "id": "azure",
+    "name": "Azure",
+    "kind": "AzureRss",
+    "url": "https://azure.status.microsoft/en-us/status/feed/",
+    "page": "https://azure.status.microsoft/en-us/status/"
+  },
+  {
+    "id": "azure-devops",
+    "name": "Azure DevOps",
+    "kind": "AzureDevOps",
+    "url": "https://status.dev.azure.com/_apis/status/health?api-version=7.1-preview.1",
+    "page": "https://status.dev.azure.com/"
+  },
+  {
+    "id": "bitbucket",
+    "name": "Bitbucket",
+    "kind": "Statuspage",
+    "url": "https://bitbucket.status.atlassian.com",
+    "page": "https://bitbucket.status.atlassian.com"
+  },
+  {
+    "id": "circleci",
+    "name": "CircleCI",
+    "kind": "Statuspage",
+    "url": "https://status.circleci.com",
+    "page": "https://status.circleci.com"
+  },
+  {
+    "id": "claude",
+    "name": "Claude",
+    "kind": "Statuspage",
+    "url": "https://status.claude.com",
+    "page": "https://status.claude.com"
+  },
+  {
+    "id": "cloudflare",
+    "name": "Cloudflare",
+    "kind": "Statuspage",
+    "url": "https://www.cloudflarestatus.com",
+    "page": "https://www.cloudflarestatus.com",
+    "include": [
+      "Cloudflare Sites and Services"
+    ]
+  },
+  {
+    "id": "confluence",
+    "name": "Confluence",
+    "kind": "Statuspage",
+    "url": "https://confluence.status.atlassian.com",
+    "page": "https://confluence.status.atlassian.com"
+  },
+  {
+    "id": "digitalocean",
+    "name": "DigitalOcean",
+    "kind": "Statuspage",
+    "url": "https://status.digitalocean.com",
+    "page": "https://status.digitalocean.com"
+  },
+  {
+    "id": "discord",
+    "name": "Discord",
+    "kind": "Statuspage",
+    "url": "https://discordstatus.com",
+    "page": "https://discordstatus.com"
+  },
+  {
+    "id": "docker",
+    "name": "Docker",
+    "kind": "Statuspage",
+    "url": "https://www.dockerstatus.com",
+    "page": "https://www.dockerstatus.com"
+  },
+  {
+    "id": "dropbox",
+    "name": "Dropbox",
+    "kind": "Statuspage",
+    "url": "https://status.dropbox.com",
+    "page": "https://status.dropbox.com"
+  },
+  {
+    "id": "epicgames",
+    "name": "Epic Games",
+    "kind": "Statuspage",
+    "url": "https://status.epicgames.com",
+    "page": "https://status.epicgames.com"
+  },
+  {
+    "id": "figma",
+    "name": "Figma",
+    "kind": "Statuspage",
+    "url": "https://status.figma.com",
+    "page": "https://status.figma.com"
+  },
+  {
+    "id": "flyio",
+    "name": "Fly.io",
+    "kind": "IncidentIo",
+    "url": "https://status.flyio.net",
+    "page": "https://status.flyio.net"
+  },
+  {
+    "id": "github",
+    "name": "GitHub",
+    "kind": "Statuspage",
+    "url": "https://www.githubstatus.com",
+    "page": "https://www.githubstatus.com"
+  },
+  {
+    "id": "gitlab",
+    "name": "GitLab",
+    "kind": "StatusIo",
+    "url": "https://status.io/1.0/status/5b36dc6502d06804c08349f7",
+    "page": "https://status.gitlab.com/"
+  },
+  {
+    "id": "google-cloud",
+    "name": "Google Cloud",
+    "kind": "Google",
+    "url": "https://status.cloud.google.com/incidents.json",
+    "page": "https://status.cloud.google.com/"
+  },
+  {
+    "id": "google-workspace",
+    "name": "Google Workspace",
+    "kind": "Google",
+    "url": "https://www.google.com/appsstatus/dashboard/incidents.json",
+    "page": "https://www.google.com/appsstatus/dashboard/"
+  },
+  {
+    "id": "hashicorp",
+    "name": "HashiCorp",
+    "kind": "IncidentIo",
+    "url": "https://status.hashicorp.com",
+    "page": "https://status.hashicorp.com"
+  },
+  {
+    "id": "heroku",
+    "name": "Heroku",
+    "kind": "Heroku",
+    "url": "https://status.heroku.com/api/v4/current-status",
+    "page": "https://status.heroku.com/"
+  },
+  {
+    "id": "jira",
+    "name": "Jira",
+    "kind": "Statuspage",
+    "url": "https://jira-software.status.atlassian.com",
+    "page": "https://jira-software.status.atlassian.com"
+  },
+  {
+    "id": "linear",
+    "name": "Linear",
+    "kind": "IncidentIo",
+    "url": "https://linearstatus.com",
+    "page": "https://linearstatus.com"
+  },
+  {
+    "id": "mongodb",
+    "name": "MongoDB Atlas",
+    "kind": "Statuspage",
+    "url": "https://status.mongodb.com",
+    "page": "https://status.mongodb.com"
+  },
+  {
+    "id": "netlify",
+    "name": "Netlify",
+    "kind": "Statuspage",
+    "url": "https://www.netlifystatus.com",
+    "page": "https://www.netlifystatus.com"
+  },
+  {
+    "id": "notion",
+    "name": "Notion",
+    "kind": "Statuspage",
+    "url": "https://www.notion-status.com",
+    "page": "https://www.notion-status.com"
+  },
+  {
+    "id": "npm",
+    "name": "npm",
+    "kind": "Statuspage",
+    "url": "https://status.npmjs.org",
+    "page": "https://status.npmjs.org"
+  },
+  {
+    "id": "openai",
+    "name": "OpenAI",
+    "kind": "IncidentIo",
+    "url": "https://status.openai.com",
+    "page": "https://status.openai.com"
+  },
+  {
+    "id": "perplexity",
+    "name": "Perplexity",
+    "kind": "IncidentIo",
+    "url": "https://status.perplexity.com",
+    "page": "https://status.perplexity.com"
+  },
+  {
+    "id": "postman",
+    "name": "Postman",
+    "kind": "Statuspage",
+    "url": "https://status.postman.com",
+    "page": "https://status.postman.com"
+  },
+  {
+    "id": "reddit",
+    "name": "Reddit",
+    "kind": "Statuspage",
+    "url": "https://www.redditstatus.com",
+    "page": "https://www.redditstatus.com"
+  },
+  {
+    "id": "render",
+    "name": "Render",
+    "kind": "Statuspage",
+    "url": "https://status.render.com",
+    "page": "https://status.render.com"
+  },
+  {
+    "id": "rubygems",
+    "name": "RubyGems",
+    "kind": "Statuspage",
+    "url": "https://status.rubygems.org",
+    "page": "https://status.rubygems.org"
+  },
+  {
+    "id": "sentry",
+    "name": "Sentry",
+    "kind": "Statuspage",
+    "url": "https://status.sentry.io",
+    "page": "https://status.sentry.io"
+  },
+  {
+    "id": "slack",
+    "name": "Slack",
+    "kind": "Slack",
+    "url": "https://slack-status.com/api/v2.0.0/current",
+    "page": "https://slack-status.com/"
+  },
+  {
+    "id": "supabase",
+    "name": "Supabase",
+    "kind": "IncidentIo",
+    "url": "https://status.supabase.com",
+    "page": "https://status.supabase.com"
+  },
+  {
+    "id": "twilio",
+    "name": "Twilio",
+    "kind": "Statuspage",
+    "url": "https://status.twilio.com",
+    "page": "https://status.twilio.com"
+  },
+  {
+    "id": "vercel",
+    "name": "Vercel",
+    "kind": "Statuspage",
+    "url": "https://www.vercel-status.com",
+    "page": "https://www.vercel-status.com"
+  },
+  {
+    "id": "zoom",
+    "name": "Zoom",
+    "kind": "Statuspage",
+    "url": "https://www.zoomstatus.com",
+    "page": "https://www.zoomstatus.com"
+  }
+]

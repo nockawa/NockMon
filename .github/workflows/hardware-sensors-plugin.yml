@@ -1,7 +1,7 @@
 # The Hardware sensors plugin (samples/HardwareSensors.NockMon, package NockMon.HardwareSensors), versioned apart from
 # NockMon. Pushing a tag hardware-sensors-v<major>.<minor>.<patch> packs it and, once approved on the release environment,
-# publishes it on nuget.org (trusted publishing). Built against the SDK of the same commit; users need NockMon 1.2 or
-# later (plugin API 1.1). Pull requests touching it only build and pack. Tags must be on main; actions
+# publishes it on nuget.org (trusted publishing). Built against the SDK it declares (1.1: users need NockMon 1.2 or
+# later). Pull requests touching it only build and pack. Tags must be on main; actions
 # are pinned by commit.
 name: Hardware sensors plugin
 
@@ -43,8 +43,9 @@ jobs:
             "version=$(([xml](Get-Content samples/HardwareSensors.NockMon/HardwareSensors.NockMon.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)" >> $env:GITHUB_OUTPUT
           }
 
-      # Built against the SDK in this commit, packed here (it may not be on nuget.org yet): the plugin package carries
-      # no dependency on it, only the plugin API version (checked by NockMon at install and load).
+      # Built against the SDK version the plugin declares (NockMonSdkVersion): it sets the plugin API version, so the
+      # oldest NockMon that loads it. That version comes from nuget.org, or from this commit's SDK, packed here, when it
+      # is not published yet. The package carries no dependency on the SDK.
       - name: Pack
         shell: pwsh
         env:
@@ -52,8 +53,7 @@ jobs:
         run: |
           dotnet pack src/NockMon.Sdk -c Release -o sdk
           if ($LASTEXITCODE -ne 0) { throw "SDK pack failed ($LASTEXITCODE)." }
-          $sdk = ([xml](Get-Content src/NockMon.Sdk/NockMon.Sdk.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
-          dotnet pack samples/HardwareSensors.NockMon -c Release -o artifacts "-p:Version=$env:VERSION" "-p:NockMonSdkVersion=$sdk" `
+          dotnet pack samples/HardwareSensors.NockMon -c Release -o artifacts "-p:Version=$env:VERSION" `
             "-p:RestoreAdditionalProjectSources=$((Resolve-Path sdk).Path)"
           if ($LASTEXITCODE -ne 0) { throw "Plugin pack failed ($LASTEXITCODE)." }
 

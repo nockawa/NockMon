@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    NockMon plugin: the status pages of online services (Statuspage, incident.io, status.io, Slack, Google, AWS, Azure, Heroku, Azure DevOps), followed
+    per widget, shown from one glyph up to incidents and their updates. Build, then load the output folder in NockMon
+    (Plugins › Development, or nockmon - -plugin <output folder>). Published by .github/workflows/service-status-plugin.yml
+    (tag service-status-vX.Y.Z). Status/ holds everything but the UI: the tests compile it as is.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- First-party: under the NockMon name (the plugin id, stored in layouts). -->
+    <PackageId>NockMon.ServiceStatus</PackageId>
+    <Version>0.1.0</Version>
+    <Title>Service status</Title>
+    <Authors>nockawa</Authors>
+    <Description>NockMon widget: the status of the online services you follow (Claude, OpenAI, GitHub, GitLab, Cloudflare, AWS, Azure, Google Cloud, Slack and 30 more, or any Statuspage, incident.io or status.io page), from their public status pages: one icon at the smallest size, up to incidents and their latest updates. Their states can be recorded in NockMon's history.</Description>
+    <PackageTags>nockmon;nockmon-plugin;status;statuspage;incident;outage;uptime</PackageTags>
+    <PackageProjectUrl>https://github.com/nockawa/NockMon/tree/main/samples/ServiceStatus.NockMon</PackageProjectUrl>
+    <PackageIcon>icon.png</PackageIcon>
+    <RepositoryUrl>https://github.com/nockawa/NockMon.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Metric sources need the plugin API 1.1: NockMon 1.2 or later. -->
+    <NockMonSdkVersion Condition="'$(NockMonSdkVersion)' == ''">1.1.0</NockMonSdkVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- From nuget.org, as in any plugin: a ProjectReference to src/NockMon.Sdk would not import its build files. -->
+    <PackageReference Include="NockMon.Sdk" Version="$(NockMonSdkVersion)" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Catalog.json" LogicalName="ServiceStatus.NockMon.Catalog.json" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\docs\images\icon.png" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+</Project>

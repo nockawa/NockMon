@@ -101,7 +101,7 @@ jobs:
         run: |
           $sdk = ([xml](Get-Content src/NockMon.Sdk/NockMon.Sdk.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
           $source = (Resolve-Path "artifacts/release/$env:VERSION/nuget").Path
-          foreach ($plugin in 'samples/ClaudeUsage.NockMon', 'samples/HardwareSensors.NockMon') {
+          foreach ($plugin in 'samples/ClaudeUsage.NockMon', 'samples/HardwareSensors.NockMon', 'samples/ServiceStatus.NockMon') {
             dotnet build $plugin -c Release "-p:NockMonSdkVersion=$sdk" "-p:RestoreAdditionalProjectSources=$source"
             if ($LASTEXITCODE -ne 0) { throw "$plugin does not build against NockMon.Sdk $sdk ($LASTEXITCODE)." }
           }

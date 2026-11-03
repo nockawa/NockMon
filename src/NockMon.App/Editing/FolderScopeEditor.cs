@@ -25,8 +25,8 @@ internal sealed partial class FolderScopeEditor : StackPanel
         pathRow.Children.Add(_path);
         pathRow.Children.Add(_browse);
         Children.Add(pathRow);
-        Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _include, _exclude } });
-        Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, Children = { _recursive, _sizeOnDisk } });
+        Children.Add(new WrapPanel { Children = { _include, _exclude } });
+        Children.Add(new WrapPanel { Spacing = 16, Children = { _recursive, _sizeOnDisk } });
         ToolTipService.SetToolTip(_sizeOnDisk, "Space taken on the volume (whole clusters; less for compressed, sparse and online-only files) instead of the files' sizes.");
         ToolTipService.SetToolTip(_exclude, "Folder names skipped with their content; * and ? wildcards, ; between names.");
         ToolTipService.SetToolTip(_include, "File names counted; * and ? wildcards, ; between patterns.");
