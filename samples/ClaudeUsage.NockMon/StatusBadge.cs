@@ -52,7 +52,7 @@ internal sealed partial class StatusBadge : Button
 
     private static UIElement BuildDetails(ClaudeStatus status, ElementTheme theme)
     {
-        var link = new Hyperlink { NavigateUri = new Uri(StatusService.PageUrl) };
+        var link = Link(new Uri(StatusService.PageUrl));
         link.Inlines.Add(new Run { Text = "status.claude.com" });
         var source = new TextBlock { FontSize = 12 };
         source.Inlines.Add(link);
@@ -85,7 +85,7 @@ internal sealed partial class StatusBadge : Button
             if (incident.Url is { } url)
             {
                 // https only (checked when parsed): the link comes from a fetched page, and NockMon runs as administrator.
-                var open = new Hyperlink { NavigateUri = new Uri(url) };
+                var open = Link(new Uri(url));
                 open.Inlines.Add(new Run { Text = incident.Name });
                 title.Inlines.Add(open);
             }
@@ -125,6 +125,14 @@ internal sealed partial class StatusBadge : Button
             _ => dark ? (0xFF, 0x6B, 0x6B) : (0xC4, 0x2B, 0x1C),
         };
         return new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, (byte)r, (byte)g, (byte)b));
+    }
+
+    /// <summary>A link opened as the user (<see cref="Browser"/>): NavigateUri would start the browser as administrator.</summary>
+    private static Hyperlink Link(Uri uri)
+    {
+        var link = new Hyperlink();
+        link.Click += (_, _) => Browser.Open(uri);
+        return link;
     }
 
     private static string Capitalize(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
