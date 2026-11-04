@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Numerics;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Geometry;
@@ -13,20 +14,34 @@ namespace NockMon.Widgets;
 /// (a folder's size) shows; not with <paramref name="Stacked"/>.</param>
 public readonly record struct ChartStyle(bool Stacked, bool ShowLegend, bool ShowGrid, ElementTheme Theme, bool ZeroBased = true);
 
+/// <summary>Where <see cref="ChartRenderer.Draw"/> put the plot, for an overlay drawn over it (<see cref="ChartRenderer.DrawHover"/>).</summary>
+public readonly record struct ChartLayout(Rect Plot, double YMin, double YMax, float Dx, int WindowSamples)
+{
+    public bool IsEmpty => WindowSamples < 2 || Plot.Height < 4;
+
+    public float Right => (float)(Plot.X + Plot.Width);
+
+    /// <summary>Y of <paramref name="value"/>, clamped to the plot (a clipped spike sits on the top edge).</summary>
+    public float Y(double value) =>
+        (float)Math.Clamp(Plot.Y + Plot.Height - (value - YMin) * Plot.Height / (YMax - YMin), Plot.Y, Plot.Y + Plot.Height);
+}
+
 /// <summary>
 /// Time-series rendering: newest sample at the right edge, a window of <c>windowSamples</c> across the width
-/// (partial history starts mid-chart). Y axis from 0 to a nice ceiling; CPU in machine scale is fixed at 100%.
+/// (partial history starts mid-chart). Y axis from 0 to a nice ceiling that a few spikes don't set
+/// (<see cref="AxisScale.SpikeAwareCeiling"/>: they are clipped, with a caret and the highest one's value); CPU in machine
+/// scale is fixed at 100%.
 /// </summary>
 public static class ChartRenderer
 {
     private static readonly CanvasTextFormat LegendFormat = new() { FontSize = 11, FontFamily = "Segoe UI", WordWrapping = CanvasWordWrapping.NoWrap };
     private static readonly CanvasTextFormat AxisFormat = new() { FontSize = 10, FontFamily = "Segoe UI", WordWrapping = CanvasWordWrapping.NoWrap };
 
-    public static void Draw(CanvasDrawingSession ds, Rect area, IReadOnlyList<SeriesData> series, int windowSamples,
+    public static ChartLayout Draw(CanvasDrawingSession ds, Rect area, IReadOnlyList<SeriesData> series, int windowSamples,
         ChartStyle style, MonitorService monitor)
     {
         if (series.Count == 0 || area.Width < 8 || area.Height < 8)
-            return;
+            return default;
 
         var plot = area;
         if (style.ShowLegend)
@@ -35,7 +50,7 @@ public static class ChartRenderer
             plot = new Rect(area.X, area.Y + legendHeight + 2, area.Width, Math.Max(0, area.Height - legendHeight - 2));
         }
         if (plot.Height < 4)
-            return;
+            return default;
 
         var unit = series[0].Source.Unit;
         var (yMin, yMax) = style.ZeroBased || style.Stacked ? (0d, ComputeMax(series, unit, style.Stacked, monitor)) : FitRange(series);
@@ -46,6 +61,7 @@ public static class ChartRenderer
         var dx = (float)(plot.Width / Math.Max(1, windowSamples - 1));
         Span<float> stackBase = windowSamples <= 8192 ? stackalloc float[windowSamples] : new float[windowSamples];
         stackBase.Clear();
+        var highest = new ClippedPeak(0, 0, default);
 
         for (var i = 0; i < series.Count; i++)
         {
@@ -77,11 +93,132 @@ public static class ChartRenderer
                 ds.DrawGeometry(line, s.Color, 1.5f);
             }
 
+            MarkClipped(ds, plot, values, baseline, style.Stacked, dx, yMax, s.Color, ref highest);
             if (style.Stacked)
             {
                 for (var k = 0; k < values.Length; k++)
                     baseline[k] += values[k];
             }
+        }
+
+        if (highest.Value > 0 && style.ShowGrid)
+        {
+            using var label = new CanvasTextLayout(ds, $"peak {monitor.Format(highest.Value, unit)}", AxisFormat, 10_000, 14);
+            var width = (float)label.LayoutBounds.Width;
+            var right = (float)(plot.X + plot.Width);
+            var x = highest.X + 6 + width <= right ? highest.X + 6 : highest.X - 6 - width;
+            ds.DrawTextLayout(label, new Vector2(Math.Max((float)plot.X, x), (float)plot.Y), highest.Color);
+        }
+        return new ChartLayout(plot, yMin, yMax, dx, windowSamples);
+    }
+
+    private readonly record struct ClippedPeak(float X, float Value, Windows.UI.Color Color);
+
+    [ThreadStatic] private static Vector2[]? _caret;
+
+    /// <summary>
+    /// A caret on the top edge over each run of samples above the axis (at the run's peak); the highest peak of all series
+    /// goes to <paramref name="highest"/>, for its label.
+    /// </summary>
+    private static void MarkClipped(CanvasDrawingSession ds, Rect plot, ReadOnlySpan<float> values, ReadOnlySpan<float> baseline, bool stacked,
+        float dx, double yMax, Windows.UI.Color color, ref ClippedPeak highest)
+    {
+        var startX = (float)(plot.X + plot.Width) - (values.Length - 1) * dx;
+        var top = (float)plot.Y;
+        var caret = _caret ??= new Vector2[3];
+        int peak = -1;
+        float peakValue = 0;
+        for (var k = 0; k <= values.Length; k++)
+        {
+            var v = k < values.Length ? values[k] + (stacked ? baseline[k] : 0) : float.NegativeInfinity;
+            if (v > yMax)
+            {
+                if (peak < 0 || v > peakValue)
+                    (peak, peakValue) = (k, v);
+                continue;
+            }
+            if (peak < 0)
+                continue;
+            var x = startX + peak * dx;
+            caret[0] = new Vector2(x - 4, top + 6);
+            caret[1] = new Vector2(x + 4, top + 6);
+            caret[2] = new Vector2(x, top);
+            using (var geometry = CanvasGeometry.CreatePolygon(ds, caret))
+                ds.FillGeometry(geometry, color);
+            if (peakValue > highest.Value)
+                highest = new ClippedPeak(x, peakValue, color);
+            peak = -1;
+        }
+    }
+
+    /// <summary>
+    /// Hover readout over a chart drawn with <paramref name="layout"/>: a light vertical bar on the sample nearest to
+    /// <paramref name="pointer"/>, a dot on each series and a box with the sample's time and the series' values.
+    /// </summary>
+    public static void DrawHover(CanvasDrawingSession ds, ChartLayout layout, IReadOnlyList<SeriesData> series, SampleTimes times,
+        Point pointer, ChartStyle style, MonitorService monitor)
+    {
+        if (layout.IsEmpty || series.Count == 0)
+            return;
+        var newest = 0;
+        for (var i = 0; i < series.Count; i++)
+            newest = Math.Max(newest, series[i].Count);
+        // Samples back from the newest (right edge); none left of the oldest.
+        var back = Math.Max(0, (int)Math.Round((layout.Right - pointer.X) / layout.Dx));
+        if (back >= Math.Min(newest, layout.WindowSamples))
+            return;
+
+        var plot = layout.Plot;
+        var x = layout.Right - back * layout.Dx;
+        ds.DrawLine(x, (float)plot.Y, x, (float)(plot.Y + plot.Height), Palette.Crosshair(style.Theme), 1);
+
+        var panel = Palette.Panel(style.Theme);
+        double stack = 0;
+        for (var i = 0; i < series.Count; i++)
+        {
+            var s = series[i];
+            if (s.Error is not null || s.Count <= back)
+                continue;
+            var v = s.Values[s.Count - 1 - back];
+            stack += v;
+            var y = layout.Y(style.Stacked ? stack : v);
+            ds.FillCircle(x, y, 4, panel);
+            ds.FillCircle(x, y, 2.75f, s.Color);
+        }
+
+        // The box: the time, then one line per series.
+        const float lineHeight = 15, pad = 6, swatch = 11;
+        var time = times.Count > back ? times.Values[times.Count - 1 - back].ToLocalTime().ToString("T", CultureInfo.CurrentCulture) : "";
+        var lines = new CanvasTextLayout[series.Count + 1];
+        try
+        {
+            lines[0] = new CanvasTextLayout(ds, time, LegendFormat, 10_000, lineHeight);
+            var width = (float)lines[0].LayoutBounds.Width;
+            for (var i = 0; i < series.Count; i++)
+            {
+                var s = series[i];
+                var value = s.Error is not null || s.Count <= back ? "–" : monitor.Format(s.Values[s.Count - 1 - back], s.Source.Unit);
+                lines[i + 1] = new CanvasTextLayout(ds, $"{s.Label}  {value}", LegendFormat, 10_000, lineHeight);
+                width = Math.Max(width, swatch + (float)lines[i + 1].LayoutBounds.Width);
+            }
+            float w = width + 2 * pad, h = lines.Length * lineHeight + 2 * pad;
+            var bx = x + 10 + w <= layout.Right ? x + 10 : Math.Max((float)plot.X, x - 10 - w);
+            var by = (float)Math.Clamp(pointer.Y - h / 2, 0, Math.Max(0, plot.Y + plot.Height - h));
+            ds.FillRoundedRectangle(bx, by, w, h, 4, 4, panel);
+            ds.DrawRoundedRectangle(bx, by, w, h, 4, 4, Palette.CellBorder(style.Theme), 1);
+            ds.DrawTextLayout(lines[0], new Vector2(bx + pad, by + pad), Palette.SubtleText(style.Theme));
+            var text = Palette.Text(style.Theme);
+            for (var i = 0; i < series.Count; i++)
+            {
+                var ly = by + pad + (i + 1) * lineHeight;
+                ds.FillRoundedRectangle(bx + pad, ly + 4, 8, 8, 2, 2, series[i].Color);
+                ds.DrawTextLayout(lines[i + 1], new Vector2(bx + pad + swatch, ly), text);
+            }
+        }
+        finally
+        {
+            foreach (var line in lines)
+                line?.Dispose();
         }
     }
 
@@ -199,38 +336,30 @@ public static class ChartRenderer
         if (unit == MetricUnit.Cpu && monitor.CpuScale == CpuScale.Machine)
             return monitor.LogicalProcessors;
 
-        double max = 0;
-        if (stacked)
+        // The chart's top edge per sample (the stack's sum, or the highest series), aligned on the newest sample.
+        var n = 0;
+        for (var i = 0; i < series.Count; i++)
+            n = Math.Max(n, series[i].Count);
+        if (_envelope is null || _envelope.Length < 2 * n)
+            _envelope = new float[Math.Max(2 * n, 2048)];
+        var envelope = _envelope.AsSpan(0, n);
+        envelope.Clear();
+        for (var i = 0; i < series.Count; i++) // Indexed: an interface enumerator per frame otherwise.
         {
-            var n = 0;
-            for (var i = 0; i < series.Count; i++)
-                n = Math.Max(n, series[i].Count);
-            for (var k = 0; k < n; k++)
-            {
-                double sum = 0;
-                for (var i = 0; i < series.Count; i++) // Indexed: an interface enumerator per sample per frame otherwise.
-                {
-                    var s = series[i];
-                    var offset = n - s.Count; // Align on the newest sample.
-                    if (k >= offset)
-                        sum += s.Values[k - offset];
-                }
-                max = Math.Max(max, sum);
-            }
+            var s = series[i];
+            var top = envelope[(n - s.Count)..];
+            var values = s.Values.AsSpan(0, s.Count);
+            for (var k = 0; k < values.Length; k++)
+                top[k] = stacked ? top[k] + values[k] : Math.Max(top[k], values[k]);
         }
-        else
-        {
-            foreach (var s in series)
-            {
-                foreach (var v in s.Values.AsSpan(0, s.Count))
-                    max = Math.Max(max, v);
-            }
-        }
+        var ceiling = AxisScale.SpikeAwareCeiling(envelope, _envelope.AsSpan(n, n), unit);
         if (unit != MetricUnit.Cpu)
-            return AxisScale.NiceCeiling(max, unit);
+            return ceiling;
         // CPUs: at least one CPU so idle charts don't amplify noise, at most the machine.
-        return Math.Clamp(AxisScale.NiceCeiling(max, unit), 1, Math.Max(1, monitor.LogicalProcessors));
+        return Math.Clamp(ceiling, 1, Math.Max(1, monitor.LogicalProcessors));
     }
+
+    [ThreadStatic] private static float[]? _envelope;
 
     /// <summary>Visible values' range with a 15 % margin each side (at least 1 % of the value, so a flat line sits mid-chart), floored at 0.</summary>
     private static (double Min, double Max) FitRange(IReadOnlyList<SeriesData> series)
@@ -256,6 +385,8 @@ public static class ChartRenderer
             ds.DrawLine((float)plot.X, y, (float)(plot.X + plot.Width), y, grid, 1);
         }
         ds.DrawText(monitor.Format(yMax, unit), (float)plot.X + 2, (float)plot.Y + 1, Palette.SubtleText(theme), AxisFormat);
+        if (plot.Height >= 60) // The middle line too, above it, when there's room for both.
+            ds.DrawText(monitor.Format((yMin + yMax) / 2, unit), (float)plot.X + 2, (float)(plot.Y + plot.Height / 2) - 13, Palette.SubtleText(theme), AxisFormat);
         if (yMin > 0)
             ds.DrawText(monitor.Format(yMin, unit), (float)plot.X + 2, (float)(plot.Y + plot.Height) - 13, Palette.SubtleText(theme), AxisFormat);
     }

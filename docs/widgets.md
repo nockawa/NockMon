@@ -25,6 +25,10 @@ Time series of one or more metrics, from the history. Default size 6×3, minimum
 Only metrics marked *chartable* below have history. Process series are sampled at the fast rate: NockMon keeps a handle
 on every matching process.
 
+The axis fits most of the data: when a few short spikes (under 3 % of the window) exceed three times the rest, they go
+above the axis, marked with a caret, and the highest one's value is shown (*peak 205 MB/s*). Hover a chart for the time
+and the series' values at the pointer.
+
 ### Value
 
 One metric's latest value, large, over a sparkline. Default size 2×2, minimum 1×1.

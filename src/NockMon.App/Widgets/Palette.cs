@@ -35,6 +35,12 @@ public static class Palette
     /// <summary>Light grey outline separating small-multiple cells.</summary>
     public static Color CellBorder(ElementTheme theme) => theme == ElementTheme.Dark ? ColorHelper.FromArgb(0x40, 0xFF, 0xFF, 0xFF) : ColorHelper.FromArgb(0x30, 0, 0, 0);
 
+    /// <summary>Chart hover: the vertical bar at the pointed time.</summary>
+    public static Color Crosshair(ElementTheme theme) => theme == ElementTheme.Dark ? ColorHelper.FromArgb(0x38, 0xFF, 0xFF, 0xFF) : ColorHelper.FromArgb(0x2C, 0, 0, 0);
+
+    /// <summary>Chart hover: the readout's background (and the ring around its dots).</summary>
+    public static Color Panel(ElementTheme theme) => theme == ElementTheme.Dark ? ColorHelper.FromArgb(0xF2, 0x2C, 0x2C, 0x2C) : ColorHelper.FromArgb(0xF2, 0xFC, 0xFC, 0xFC);
+
     public static Color WithAlpha(Color c, byte alpha) => ColorHelper.FromArgb(alpha, c.R, c.G, c.B);
 
     private static Color Rgb(uint v) => ColorHelper.FromArgb(0xFF, (byte)(v >> 16), (byte)(v >> 8), (byte)v);
