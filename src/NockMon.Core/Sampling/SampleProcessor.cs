@@ -227,6 +227,38 @@ public sealed class SampleProcessor
         }
     }
 
+    /// <summary>
+    /// Per-process .NET runtime values over the table's interval (after a successful scan). The GC pause time is a share
+    /// of the interval, capped at 100 % (a suspension longer than the interval counts when it ends); the freed bytes are
+    /// not below 0.
+    /// </summary>
+    public static void ApplyRuntimeEvents(ProcessTable table, Dictionary<int, Etw.RuntimeTotals> runtimes)
+    {
+        var seconds = table.Interval.TotalSeconds;
+        if (seconds <= 0)
+            return;
+        foreach (ref var p in table.Items.AsSpan(0, table.Count))
+        {
+            if (!runtimes.TryGetValue(p.Pid, out var r))
+            {
+                p.GcPausePercent = p.GcPauseMaxMs = p.GcRate = p.Gen2GcRate = p.AllocationRate = p.FreedRate = p.PromotedRate = 0;
+                p.ExceptionRate = p.ContentionRate = 0;
+                p.ManagedHeap = 0;
+                continue;
+            }
+            p.GcPausePercent = Math.Min(100, r.PauseMs / 10 / seconds);
+            p.GcPauseMaxMs = r.PauseMaxMs;
+            p.GcRate = r.Gcs / seconds;
+            p.Gen2GcRate = r.Gen2Gcs / seconds;
+            p.ManagedHeap = r.HeapBytes;
+            p.AllocationRate = r.AllocatedBytes / seconds;
+            p.FreedRate = Math.Max(0, r.FreedBytes) / seconds;
+            p.PromotedRate = r.PromotedBytes / seconds;
+            p.ExceptionRate = r.Exceptions / seconds;
+            p.ContentionRate = r.Contentions / seconds;
+        }
+    }
+
     /// <summary>Pool tags: sizes, growth (bytes/s) and allocation rate since the previous scan. Tag strings are cached.</summary>
     private void ProcessPoolTags(RawSample raw, ProcessTable output, bool hadBaseline, double seconds)
     {

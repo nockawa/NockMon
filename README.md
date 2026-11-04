@@ -19,6 +19,8 @@ dashboards for you.
 - **History, not just "now"**: about an hour of history in memory, at 0.5 s resolution by default.
 - **Deep diagnostics**: which driver causes audio crackles (longest DPC/ISR per driver), which pool tag leaks kernel
   memory, which object type leaks handles, which short-lived process keeps spawning, with its command line and exit code.
+- **.NET processes, from the outside**: GC pause time and longest pause, GCs, managed heap, allocation rate, exceptions
+  and lock contentions of every .NET process, from the runtime's own events: nothing to set in the process, no restart.
 - **Any GPU**: engine load (3D, Compute, Copy, Video…) and memory for every vendor through the graphics kernel;
   temperature, power, fan and clocks on NVIDIA through NVML.
 - **Compact mode**: no chrome, just the board. Double-click to toggle, drag anywhere to move. Pin it on top of everything.

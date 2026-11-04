@@ -1,5 +1,9 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Parsers;
+using Microsoft.Diagnostics.Tracing.Parsers.Clr;
 using Microsoft.Diagnostics.Tracing.Parsers.Kernel;
 using Microsoft.Diagnostics.Tracing.Session;
 
@@ -11,6 +15,11 @@ namespace NockMon.Core.Etw;
 /// duration), process start/exit. Callbacks run on a dedicated thread and only add into accumulators under a short
 /// lock; the sampler harvests (and resets) them. A stale session left by a crash is stopped at start.
 /// No ImageLoad keyword: it triggers a rundown of every module of every process; drivers come from EnumDeviceDrivers.
+/// <para>
+/// The same session takes the .NET runtime provider (every .NET Framework and .NET process emits it, without any setting
+/// in the process): GCs, their suspensions, heap size after each GC, allocation ticks (one per ~100 KB allocated: the
+/// Verbose level), exceptions thrown and lock contentions.
+/// </para>
 /// </summary>
 /// <param name="sessionName">ETW session name. Tests use their own: starting stops a session of the same name, which
 /// would be a running NockMon's.</param>
@@ -26,11 +35,27 @@ public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.Sessi
     private readonly Dictionary<string, int> _driverIndex = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<DriverTotals> _driverTotals = [];
     private readonly Dictionary<int, ProcessIoTotals> _processes = new();
+    private readonly Dictionary<int, RuntimeState> _runtimes = new();
     private readonly Queue<ProcessEvent> _events = new();
     private KernelEventTotals _totals;
     private TraceEventSession? _session;
     private Thread? _thread;
     private long _lastDriverRefresh;
+
+    /// <summary>A .NET process's totals, the suspension in progress, and the allocations since its last GC.</summary>
+    internal struct RuntimeState
+    {
+        public RuntimeTotals Totals;
+        public double SuspendedAtMs;
+        public bool Suspended;
+        public bool Exited;
+        /// <summary>Whether <see cref="RuntimeTotals.HeapBytes"/> comes from a GC (the base of the next freed amount).</summary>
+        public bool HasHeap;
+        public long AllocatedSinceGc;
+    }
+
+    private const ClrTraceEventParser.Keywords RuntimeKeywords =
+        ClrTraceEventParser.Keywords.GC | ClrTraceEventParser.Keywords.Exception | ClrTraceEventParser.Keywords.Contention;
 
     private volatile string? _status = "Not started.";
     private long _eventsLost;
@@ -53,7 +78,7 @@ public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.Sessi
             {
                 return _eventsLost = session.EventsLost;
             }
-            catch (Exception e) when (e is System.Runtime.InteropServices.COMException or InvalidOperationException or UnauthorizedAccessException)
+            catch (Exception e) when (e is COMException or InvalidOperationException or UnauthorizedAccessException)
             {
                 return _eventsLost; // Stopped meanwhile: the ETW thread reports it.
             }
@@ -81,11 +106,21 @@ public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.Sessi
                 | KernelTraceEventParser.Keywords.Process | KernelTraceEventParser.Keywords.DeferedProcedureCalls
                 | KernelTraceEventParser.Keywords.Interrupt);
             Subscribe(_session.Source.Kernel);
+            // After the kernel provider (system logger mode first). Without it, the kernel events still work.
+            try
+            {
+                _session.EnableProvider(ClrTraceEventParser.ProviderGuid, TraceEventLevel.Verbose, (ulong)RuntimeKeywords);
+                Subscribe(_session.Source.Clr);
+            }
+            catch (Exception e) when (e is UnauthorizedAccessException or InvalidOperationException or COMException)
+            {
+                Debug.WriteLine($".NET runtime events unavailable: {e.Message}");
+            }
             Status = null; // Before the thread: a session failing at once reports it, not overwritten here.
             _thread = new Thread(ProcessEvents) { IsBackground = true, Name = "NockMon ETW" };
             _thread.Start(_session);
         }
-        catch (Exception e) when (e is UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
+        catch (Exception e) when (e is UnauthorizedAccessException or InvalidOperationException or COMException)
         {
             Status = $"Kernel events unavailable: {e.Message}";
             _session?.Dispose();
@@ -136,9 +171,104 @@ public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.Sessi
         k.PerfInfoISR += e => OnIsr(e.Routine, e.ElapsedTimeMSec);
         k.ProcessStart += e => AddEvent(new ProcessEvent(e.TimeStamp.ToUniversalTime(), ProcessEventKind.Start, e.ProcessID, e.ParentID,
             e.ImageFileName, e.CommandLine, null));
-        k.ProcessStop += e => AddEvent(new ProcessEvent(e.TimeStamp.ToUniversalTime(), ProcessEventKind.Exit, e.ProcessID, e.ParentID,
-            e.ImageFileName, null, e.ExitStatus));
+        k.ProcessStop += e =>
+        {
+            AddEvent(new ProcessEvent(e.TimeStamp.ToUniversalTime(), ProcessEventKind.Exit, e.ProcessID, e.ParentID,
+                e.ImageFileName, null, e.ExitStatus));
+            lock (_lock)
+            {
+                ref var r = ref CollectionsMarshal.GetValueRefOrNullRef(_runtimes, e.ProcessID);
+                if (!Unsafe.IsNullRef(ref r))
+                    r.Exited = true; // Reported once more, then forgotten (its PID can be reused).
+            }
+        };
     }
+
+    private void Subscribe(ClrTraceEventParser clr)
+    {
+        clr.GCStart += e =>
+        {
+            lock (_lock)
+            {
+                ref var r = ref Runtime(e.ProcessID);
+                r.Totals.Gcs++;
+                if (e.Depth == 2)
+                    r.Totals.Gen2Gcs++;
+            }
+        };
+        // A GC suspends the managed threads once (blocking GC) or several times (background GC phases): every
+        // suspension for a GC is a pause. Suspensions for the debugger or shutdown are not.
+        clr.GCSuspendEEStart += e =>
+        {
+            if (e.Reason is not (GCSuspendEEReason.SuspendForGC or GCSuspendEEReason.SuspendForGCPrep))
+                return;
+            lock (_lock)
+            {
+                ref var r = ref Runtime(e.ProcessID);
+                r.Suspended = true;
+                r.SuspendedAtMs = e.TimeStampRelativeMSec;
+            }
+        };
+        clr.GCRestartEEStop += e =>
+        {
+            lock (_lock)
+            {
+                ref var r = ref Runtime(e.ProcessID);
+                if (!r.Suspended)
+                    return;
+                r.Suspended = false;
+                var pause = Math.Max(0, e.TimeStampRelativeMSec - r.SuspendedAtMs);
+                r.Totals.PauseMs += pause;
+                r.Totals.PauseMaxMs = Math.Max(r.Totals.PauseMaxMs, pause);
+            }
+        };
+        clr.GCHeapStats += e =>
+        {
+            // Generation 3 is the large object heap, 4 (version 2: .NET 5+) the pinned object heap.
+            var v2 = e.Version >= 2;
+            var heap = e.GenerationSize0 + e.GenerationSize1 + e.GenerationSize2 + e.GenerationSize3 + (v2 ? e.GenerationSize4 : 0);
+            var promoted = e.TotalPromotedSize0 + e.TotalPromotedSize1 + e.TotalPromotedSize2 + e.TotalPromotedSize3 + (v2 ? e.TotalPromotedSize4 : 0);
+            lock (_lock)
+                OnHeapStats(ref Runtime(e.ProcessID), heap, promoted);
+        };
+        clr.GCAllocationTick += e =>
+        {
+            var bytes = e.Version >= 2 ? e.AllocationAmount64 : e.AllocationAmount;
+            lock (_lock)
+            {
+                ref var r = ref Runtime(e.ProcessID);
+                r.Totals.AllocatedBytes += bytes;
+                r.AllocatedSinceGc += bytes;
+            }
+        };
+        clr.ExceptionStart += e =>
+        {
+            lock (_lock)
+                Runtime(e.ProcessID).Totals.Exceptions++;
+        };
+        clr.ContentionStart += e =>
+        {
+            lock (_lock)
+                Runtime(e.ProcessID).Totals.Contentions++;
+        };
+    }
+
+    /// <summary>
+    /// The end of a GC: what it freed is the heap before it (after the previous GC, plus what was allocated since) minus
+    /// the heap after it. Unknown for the first GC seen (no heap before). Not clamped: rounding errors cancel out.
+    /// </summary>
+    internal static void OnHeapStats(ref RuntimeState r, long heap, long promoted)
+    {
+        if (r.HasHeap)
+            r.Totals.FreedBytes += r.Totals.HeapBytes + r.AllocatedSinceGc - heap;
+        r.Totals.PromotedBytes += promoted;
+        r.Totals.HeapBytes = heap;
+        r.HasHeap = true;
+        r.AllocatedSinceGc = 0;
+    }
+
+    /// <summary>State of a .NET process (caller holds the lock).</summary>
+    private ref RuntimeState Runtime(int pid) => ref CollectionsMarshal.GetValueRefOrAddDefault(_runtimes, pid, out _);
 
     private void OnDiskRead(DiskIOTraceData e) => OnDisk(e.ProcessID, e.TransferSize, e.ElapsedTimeMSec, read: true);
 
@@ -155,7 +285,7 @@ public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.Sessi
             _totals.DiskOps++;
             _totals.DiskLatencySumMs += latencyMs;
 
-            ref var p = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(_processes, pid, out _);
+            ref var p = ref CollectionsMarshal.GetValueRefOrAddDefault(_processes, pid, out _);
             if (read)
                 p.DiskReadBytes += bytes;
             else
@@ -169,7 +299,7 @@ public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.Sessi
     {
         lock (_lock)
         {
-            ref var p = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(_processes, pid, out _);
+            ref var p = ref CollectionsMarshal.GetValueRefOrAddDefault(_processes, pid, out _);
             if (send)
             {
                 _totals.NetSendBytes += bytes;
@@ -222,7 +352,7 @@ public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.Sessi
             _driverIndex[name] = index;
             _driverTotals.Add(new DriverTotals { Name = name });
         }
-        return ref System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_driverTotals)[index];
+        return ref CollectionsMarshal.AsSpan(_driverTotals)[index];
     }
 
     private void AddEvent(ProcessEvent e)
@@ -259,7 +389,7 @@ public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.Sessi
                 if (d.DpcCount > 0 || d.IsrCount > 0)
                     drivers.Add(d);
             }
-            var span = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_driverTotals);
+            var span = CollectionsMarshal.AsSpan(_driverTotals);
             for (var i = 0; i < span.Length; i++)
                 span[i] = new DriverTotals { Name = span[i].Name };
         }
@@ -268,6 +398,25 @@ public sealed class EtwKernelMonitor(string sessionName = EtwKernelMonitor.Sessi
         {
             _drivers.Refresh(); // Atomic snapshot swap: safe while the ETW thread resolves.
             _lastDriverRefresh = Stopwatch.GetTimestamp();
+        }
+    }
+
+    public void HarvestRuntime(Dictionary<int, RuntimeTotals> processes)
+    {
+        processes.Clear();
+        lock (_lock)
+        {
+            foreach (var (pid, state) in _runtimes)
+            {
+                processes[pid] = state.Totals;
+                if (state.Exited)
+                {
+                    _runtimes.Remove(pid);
+                    continue;
+                }
+                ref var r = ref CollectionsMarshal.GetValueRefOrNullRef(_runtimes, pid);
+                r.Totals = new RuntimeTotals { HeapBytes = r.Totals.HeapBytes };
+            }
         }
     }
 

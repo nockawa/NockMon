@@ -208,7 +208,9 @@ values only.
 
 - **system**: the whole machine.
 - **core**: one logical processor (chart target: its index).
-- **process**: processes. In charts, the sum over the processes matching a name pattern.
+- **process**: processes. In charts, the sum over the processes matching a name pattern (the maximum for the longest
+  GC pause). Includes the .NET runtime metrics of .NET processes: GC pauses and counts, managed heap, allocated, freed and
+  survived bytes, exceptions, lock contentions.
 - **gpu**: a GPU adapter. Every vendor reports engine load and memory through the graphics kernel, plus temperature,
   fan speed, memory clock and power percentage when the driver exposes them. NVIDIA GPUs add utilization, power in
   watts, clocks and encoder/decoder load through NVML.
@@ -319,6 +321,19 @@ values only.
 | `process.NetRecv` | Network receive | MB/s | no | TCP and UDP payload bytes received per second by the process. |
 | `process.NetBytes` | Network throughput | MB/s | yes | TCP and UDP payload bytes sent + received per second by the process. |
 | `process.Gpu` | GPU (NVIDIA) | % | yes | GPU utilization of the process on NVIDIA GPUs (NVML), summed over GPUs. |
+| `process.GcPause` | .NET GC pause time | % | yes | Share of the time the process's managed threads were stopped for garbage collections. |
+| `process.GcPauseMax` | .NET longest GC pause | ms | yes | Longest time the managed threads were stopped by one GC suspension in the interval. The maximum over processes, not the sum. |
+| `process.Gcs` | .NET GCs | /s | yes | Garbage collections started per second, all generations. |
+| `process.Gen2Gcs` | .NET gen 2 GCs | /s | yes | Full (generation 2) garbage collections started per second, background ones included. |
+| `process.ManagedHeap` | .NET managed heap | MB | yes | Size of the managed heap after the process's last GC: every generation, large and pinned object heaps. |
+| `process.Allocations` | .NET allocation rate | MB/s | yes | Bytes allocated on the managed heap per second. |
+| `process.Freed` | .NET freed by GCs | MB/s | yes | Bytes released per second by the process's garbage collections. |
+| `process.Promoted` | .NET survived GCs | MB/s | yes | Bytes per second that survived the process's garbage collections. |
+| `process.Exceptions` | .NET exceptions | /s | yes | Managed exceptions thrown per second, caught or not. |
+| `process.Contentions` | .NET lock contentions | /s | yes | Times per second a thread had to wait for a managed lock held by another thread. |
+
+The `.NET` metrics come from the .NET runtime's ETW events, which every .NET Framework and .NET process emits without
+any setting or restart, including processes started before NockMon. They are 0 for processes that are not .NET.
 
 ### gpu
 

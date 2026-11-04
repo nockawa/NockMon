@@ -24,6 +24,16 @@ internal sealed class SparseRing(int capacity)
         page[slot % PageSize] += value;
     }
 
+    /// <summary>Keeps the larger of the slot's value and <paramref name="value"/> (values are not negative).</summary>
+    public void Max(int slot, float value)
+    {
+        if (value <= 0)
+            return;
+        ref var v = ref (_pages[slot / PageSize] ??= new float[PageSize])[slot % PageSize];
+        if (value > v)
+            v = value;
+    }
+
     public void Clear(int slot)
     {
         if (_pages[slot / PageSize] is { } page)

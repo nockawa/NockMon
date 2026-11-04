@@ -113,6 +113,7 @@ public sealed class AgentTests : IDisposable
         var b = Queries.GetProcess("b", 60);
         Assert.Equal(1, b.Instances);
         Assert.Equal(20, b.Current[0].Pid);
+        Assert.Null(b.Current[0].DotNet); // No runtime activity: not reported as .NET.
         var cpu = b.History.Single(h => h.Metric == "process.Cpu");
         Assert.Equal(1.0, cpu.Max, 3);
         Assert.Equal(0.1, cpu.Last, 3);

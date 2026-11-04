@@ -7,7 +7,7 @@ namespace NockMon.Core.History;
 /// <summary>
 /// Two-rate history. Fast rings (one slot per sample): timestamps, system and per-CPU series, and watched-pattern
 /// process series. Slow rings (one slot per process scan): process series aggregated per image name (sum over
-/// instances), so they survive restarts, match any pattern and cover processes nobody watched yet.
+/// instances; maximum for peak fields: the longest GC pause), so they survive restarts, match any pattern and cover processes nobody watched yet.
 /// <para>
 /// Every series reads at the fast rate. A process series is the slow per-name sum upsampled as a step function
 /// (a scan's value holds until the next scan), overlaid with the watched-pattern data where it exists: a chart added
@@ -25,6 +25,7 @@ public sealed class HistoryStore
     private static readonly int SystemMetricCount = Enum.GetValues<SystemMetric>().Length;
     private static readonly int CoreMetricCount = Enum.GetValues<CoreMetric>().Length;
     private static readonly int ProcessFieldCount = MetricCatalog.ProcessHistoryFields.Length;
+    private static readonly bool[] PeakFields = MetricCatalog.ProcessHistoryFields.Select(MetricCatalog.IsPeakField).ToArray();
 
     private readonly DateTime[] _time;
     private readonly float[][] _system;
@@ -362,7 +363,13 @@ public sealed class HistoryStore
             }
             series.LastActiveScan = TotalScans;
             for (var f = 0; f < ProcessFieldCount; f++)
-                series.Values[f].Add(slot, (float)p.GetValue(MetricCatalog.ProcessHistoryFields[f]));
+            {
+                var value = (float)p.GetValue(MetricCatalog.ProcessHistoryFields[f]);
+                if (PeakFields[f])
+                    series.Values[f].Max(slot, value);
+                else
+                    series.Values[f].Add(slot, value);
+            }
         }
 
         foreach (ref readonly var t in table.ObjectTypeSpan)
@@ -504,7 +511,7 @@ public sealed class HistoryStore
     }
 
     /// <summary>
-    /// Sums the matching name series per scan, then holds each scan's value until the next one. Only the scans the window
+    /// Sums (peak fields: takes the maximum of) the matching name series per scan, then holds each scan's value until the next one. Only the scans the window
     /// needs are summed (<see cref="ScansSince"/>: a value list reading one sample sums one or two, not the whole
     /// retention), over the names matching the pattern (<see cref="MatchingNames"/>).
     /// </summary>
@@ -519,8 +526,16 @@ public sealed class HistoryStore
         foreach (var named in names)
         {
             named.Values[field].CopyLatest(TotalScans, one);
-            for (var i = 0; i < scans; i++)
-                sums[i] += one[i];
+            if (PeakFields[field])
+            {
+                for (var i = 0; i < scans; i++)
+                    sums[i] = Math.Max(sums[i], one[i]);
+            }
+            else
+            {
+                for (var i = 0; i < scans; i++)
+                    sums[i] += one[i];
+            }
         }
         HoldScans(sums, firstSample, destination);
     }

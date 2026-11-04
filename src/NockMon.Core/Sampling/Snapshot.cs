@@ -43,6 +43,18 @@ public struct ProcessStats
     /// <summary>GPU utilization (%) over the scan interval (NVML, NVIDIA GPUs).</summary>
     public double GpuPercent;
 
+    // .NET runtime events (ETW): rates over the scan interval; the heap as of the process's last GC. 0 if not .NET.
+    public double GcPausePercent;
+    public double GcPauseMaxMs;
+    public double GcRate;
+    public double Gen2GcRate;
+    public long ManagedHeap;
+    public double AllocationRate;
+    public double FreedRate;
+    public double PromotedRate;
+    public double ExceptionRate;
+    public double ContentionRate;
+
     public readonly ProcessKey Key => new(Pid, CreateTime);
     public readonly double IoOps => IoReadOps + IoWriteOps + IoOtherOps;
     public readonly double IoBytes => IoReadBytes + IoWriteBytes + IoOtherBytes;
@@ -87,6 +99,16 @@ public struct ProcessStats
         ProcessField.NetRecv => NetRecvBytes,
         ProcessField.NetBytes => NetSendBytes + NetRecvBytes,
         ProcessField.Gpu => GpuPercent,
+        ProcessField.GcPause => GcPausePercent,
+        ProcessField.GcPauseMax => GcPauseMaxMs,
+        ProcessField.Gcs => GcRate,
+        ProcessField.Gen2Gcs => Gen2GcRate,
+        ProcessField.ManagedHeap => ManagedHeap,
+        ProcessField.Allocations => AllocationRate,
+        ProcessField.Freed => FreedRate,
+        ProcessField.Promoted => PromotedRate,
+        ProcessField.Exceptions => ExceptionRate,
+        ProcessField.Contentions => ContentionRate,
         _ => throw new ArgumentOutOfRangeException(nameof(field), field, null),
     };
 }

@@ -78,6 +78,24 @@ public enum ProcessField
 
     /// <summary>GPU utilization of the process (NVML, NVIDIA only), scan rate.</summary>
     Gpu,
+
+    // .NET runtime events (ETW, Microsoft-Windows-DotNETRuntime), scan rate. 0 for processes that are not .NET.
+    /// <summary>Share of the interval the process's managed threads were suspended for garbage collections.</summary>
+    GcPause,
+    /// <summary>Longest GC suspension in the interval (the maximum over instances, not the sum).</summary>
+    GcPauseMax,
+    Gcs,
+    Gen2Gcs,
+    /// <summary>Managed heap size after the process's last GC.</summary>
+    ManagedHeap,
+    /// <summary>Bytes allocated on the managed heap per second.</summary>
+    Allocations,
+    /// <summary>Bytes released by GCs per second: heap before (after the previous GC, plus allocations) minus heap after.</summary>
+    Freed,
+    /// <summary>Bytes that survived GCs per second (promoted to, or kept in, an older generation).</summary>
+    Promoted,
+    Exceptions,
+    Contentions,
 }
 
 public enum SystemMetric
@@ -155,12 +173,21 @@ public static class MetricCatalog
         ProcessField.Cpu, ProcessField.PrivateBytes, ProcessField.WorkingSet, ProcessField.IoOps, ProcessField.IoBytes,
         ProcessField.Handles, ProcessField.Threads, ProcessField.HardFaults, ProcessField.Instances,
         ProcessField.DiskBytes, ProcessField.NetBytes, ProcessField.Gpu,
+        ProcessField.GcPause, ProcessField.GcPauseMax, ProcessField.Gcs, ProcessField.Gen2Gcs, ProcessField.ManagedHeap,
+        ProcessField.Allocations, ProcessField.Freed, ProcessField.Promoted, ProcessField.Exceptions, ProcessField.Contentions,
     ];
 
     public static int HistoryIndexOf(ProcessField field) => Array.IndexOf(ProcessHistoryFields, field);
 
     /// <summary>History fields also sampled at the fast rate for watched processes (handles); the others are scan-rate only.</summary>
-    public static bool IsWatchedField(ProcessField field) => field is not (ProcessField.DiskBytes or ProcessField.NetBytes or ProcessField.Gpu);
+    public static bool IsWatchedField(ProcessField field) =>
+        field is not (ProcessField.DiskBytes or ProcessField.NetBytes or ProcessField.Gpu) && !IsDotNetField(field);
+
+    /// <summary>.NET runtime fields (ETW events of the .NET runtime).</summary>
+    public static bool IsDotNetField(ProcessField field) => field >= ProcessField.GcPause;
+
+    /// <summary>Fields combined over processes (name groups, patterns) by their maximum, not their sum.</summary>
+    public static bool IsPeakField(ProcessField field) => field == ProcessField.GcPauseMax;
 
     public static MetricInfo Get(Gpu.GpuMetric metric) => metric switch
     {
@@ -231,6 +258,16 @@ public static class MetricCatalog
         ProcessField.NetRecv => new("Network receive", "Net ↓", MetricUnit.BytesPerSecond),
         ProcessField.NetBytes => new("Network throughput", "Net", MetricUnit.BytesPerSecond, true),
         ProcessField.Gpu => new("GPU (NVIDIA)", "GPU", MetricUnit.Percent, true),
+        ProcessField.GcPause => new(".NET GC pause time", "GC pause", MetricUnit.Percent, true),
+        ProcessField.GcPauseMax => new(".NET longest GC pause", "GC max", MetricUnit.Milliseconds, true),
+        ProcessField.Gcs => new(".NET GCs", "GC/s", MetricUnit.PerSecond, true),
+        ProcessField.Gen2Gcs => new(".NET gen 2 GCs", "Gen2/s", MetricUnit.PerSecond, true),
+        ProcessField.ManagedHeap => new(".NET managed heap", "Heap", MetricUnit.Bytes, true),
+        ProcessField.Allocations => new(".NET allocation rate", "Alloc", MetricUnit.BytesPerSecond, true),
+        ProcessField.Freed => new(".NET freed by GCs", "Freed", MetricUnit.BytesPerSecond, true),
+        ProcessField.Promoted => new(".NET survived GCs", "Survived", MetricUnit.BytesPerSecond, true),
+        ProcessField.Exceptions => new(".NET exceptions", "Exc/s", MetricUnit.PerSecond, true),
+        ProcessField.Contentions => new(".NET lock contentions", "Locks/s", MetricUnit.PerSecond, true),
         _ => throw new ArgumentOutOfRangeException(nameof(field), field, null),
     };
 

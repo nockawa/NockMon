@@ -375,7 +375,13 @@ public sealed class MonitorQueries(SamplingEngine engine, Func<bool> shareComman
         p.Pid, p.ParentPid, p.Name, p.CreateTime > 0 ? AgentUnits.DateTime(DateTime.FromFileTimeUtc(p.CreateTime)) : null,
         R(p.Cpu), R(p.CpuKernel), AgentUnits.Mb(p.WorkingSet), AgentUnits.Mb(p.PrivateBytes), p.Handles, p.Threads,
         AgentUnits.Mb(p.IoBytes), AgentUnits.Mb(p.DiskReadBytes + p.DiskWriteBytes), AgentUnits.Mb(p.NetSendBytes + p.NetRecvBytes),
-        R(p.HardFaults), R(p.GpuPercent), p.BasePriority, p.SessionId);
+        R(p.HardFaults), R(p.GpuPercent), p.BasePriority, p.SessionId, DotNet(in p));
+
+    /// <summary>Null for a process with no .NET runtime activity seen (not .NET, or no GC since NockMon started).</summary>
+    private static DotNetRuntime? DotNet(in ProcessStats p) => p.ManagedHeap > 0 || p.GcRate > 0 || p.AllocationRate > 0 || p.ExceptionRate > 0 || p.ContentionRate > 0
+        ? new DotNetRuntime(R(p.GcPausePercent), R(p.GcPauseMaxMs), R(p.GcRate), R(p.Gen2GcRate), AgentUnits.Mb(p.ManagedHeap),
+            AgentUnits.Mb(p.AllocationRate), AgentUnits.Mb(p.FreedRate), AgentUnits.Mb(p.PromotedRate), R(p.ExceptionRate), R(p.ContentionRate))
+        : null;
 }
 
 // --- Results (serialized camelCase; null members omitted) ----------------------------------------------------------
@@ -418,7 +424,13 @@ public sealed record ProcessDetails(string Pattern, int Instances, string? From,
 
 public sealed record ProcessInstance(
     int Pid, int ParentPid, string Name, string? Started, double Cpu, double CpuKernel, double WorkingSetMB, double PrivateMB, int Handles,
-    int Threads, double IoMBps, double DiskMBps, double NetMBps, double HardFaultsPerSec, double GpuPercent, int BasePriority, int Session);
+    int Threads, double IoMBps, double DiskMBps, double NetMBps, double HardFaultsPerSec, double GpuPercent, int BasePriority, int Session,
+    DotNetRuntime? DotNet);
+
+/// <summary>.NET runtime values of a process over the last scan; the heap as of its last GC.</summary>
+public sealed record DotNetRuntime(
+    double GcPausePercent, double LongestGcPauseMs, double GcsPerSec, double Gen2GcsPerSec, double ManagedHeapMB, double AllocationMBps,
+    double FreedMBps, double SurvivedMBps, double ExceptionsPerSec, double LockContentionsPerSec);
 
 public sealed record FieldSummary(string Metric, string Unit, double Average, double Max, string MaxAt, double Last);
 

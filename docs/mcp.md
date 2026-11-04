@@ -98,7 +98,7 @@ in **MB**, rates **per second**, times in the user's **local time** (`HH:mm:ss`)
 | `get_overview` | Current state and the last 1, 5 and 15 minutes: CPU, memory, disk, network, GPUs, longest DPC, top processes by CPU and by private memory, sampling intervals and history available. The agent starts here. |
 | `get_metric_history` | A metric over a time range, downsampled to N points (average, min, max each), with statistics: min, average, max and when, p95, last. |
 | `get_top_processes` | Processes ranked by a field: now (one row per process), or over a time range (one row per image name, average and peak with its time). |
-| `get_process` | One application in detail: its instances (PID, parent, start time, CPU, memory, handles, threads, I/O, disk, network, GPU) and the history of its metrics. |
+| `get_process` | One application in detail: its instances (PID, parent, start time, CPU, memory, handles, threads, I/O, disk, network, GPU, and for .NET processes GC pauses, GCs, managed heap, allocated, freed and survived bytes, exceptions, lock contentions) and the history of its metrics. |
 | `get_kernel_activity` | DPC and interrupt load with the longest DPC/ISR and the drivers responsible, the largest and the growing kernel pool tags, the growing kernel object types. |
 | `get_process_events` | Processes that started or exited recently, with parent PID and exit code (command lines if allowed). |
 | `list_metrics` | Every metric id with name, unit, target kind, history, and a one-line explanation. |
