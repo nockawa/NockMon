@@ -25,7 +25,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <NockMonSdkVersion Condition="'$(NockMonSdkVersion)' == ''">1.0.0</NockMonSdkVersion>
+    <NockMonSdkVersion Condition="'$(NockMonSdkVersion)' == ''">1.1.0</NockMonSdkVersion>
   </PropertyGroup>
 
   <ItemGroup>
