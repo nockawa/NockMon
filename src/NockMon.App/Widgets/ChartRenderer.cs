@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Numerics;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Brushes;
 using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.UI.Xaml;
@@ -29,7 +30,7 @@ public readonly record struct ChartLayout(Rect Plot, double YMin, double YMax, f
 /// <summary>
 /// Time-series rendering: newest sample at the right edge, a window of <c>windowSamples</c> across the width
 /// (partial history starts mid-chart). Y axis from 0 to a nice ceiling that a few spikes don't set
-/// (<see cref="AxisScale.SpikeAwareCeiling"/>: they are clipped, with a caret and the highest one's value); CPU in machine
+/// (<see cref="AxisScale.SpikeAwareCeiling"/>: they are clipped, with a band on the top edge and the highest one's value); CPU in machine
 /// scale is fixed at 100%.
 /// </summary>
 public static class ChartRenderer
@@ -114,49 +115,63 @@ public static class ChartRenderer
 
     private readonly record struct ClippedPeak(float X, float Value, Windows.UI.Color Color);
 
-    [ThreadStatic] private static Vector2[]? _caret;
+    private const float ClippedBandHeight = 8, ClippedBandMinWidth = 4;
 
     /// <summary>
-    /// A caret on the top edge over each run of samples above the axis (at the run's peak); the highest peak of all series
-    /// goes to <paramref name="highest"/>, for its label.
+    /// A band on the top edge over each run of samples above the axis (a solid edge fading downward); the highest peak of
+    /// all series goes to <paramref name="highest"/>, for its label.
     /// </summary>
     private static void MarkClipped(CanvasDrawingSession ds, Rect plot, ReadOnlySpan<float> values, ReadOnlySpan<float> baseline, bool stacked,
         float dx, double yMax, Windows.UI.Color color, ref ClippedPeak highest)
     {
-        var startX = (float)(plot.X + plot.Width) - (values.Length - 1) * dx;
+        var right = (float)(plot.X + plot.Width);
+        var startX = right - (values.Length - 1) * dx;
         var top = (float)plot.Y;
-        var caret = _caret ??= new Vector2[3];
-        int peak = -1;
+        CanvasLinearGradientBrush? fade = null; // Vertical only: one per series, made on its first run.
+        int first = -1, peak = -1;
         float peakValue = 0;
         for (var k = 0; k <= values.Length; k++)
         {
             var v = k < values.Length ? values[k] + (stacked ? baseline[k] : 0) : float.NegativeInfinity;
             if (v > yMax)
             {
+                if (first < 0)
+                    first = k;
                 if (peak < 0 || v > peakValue)
                     (peak, peakValue) = (k, v);
                 continue;
             }
-            if (peak < 0)
+            if (first < 0)
                 continue;
-            var x = startX + peak * dx;
-            caret[0] = new Vector2(x - 4, top + 6);
-            caret[1] = new Vector2(x + 4, top + 6);
-            caret[2] = new Vector2(x, top);
-            using (var geometry = CanvasGeometry.CreatePolygon(ds, caret))
-                ds.FillGeometry(geometry, color);
+            // Half a sample either side of the run, at least a few pixels wide (dense windows put several samples per pixel).
+            var x0 = startX + (first - 0.5f) * dx;
+            var x1 = startX + (k - 0.5f) * dx;
+            if (x1 - x0 < ClippedBandMinWidth)
+                (x0, x1) = ((x0 + x1 - ClippedBandMinWidth) / 2, (x0 + x1 + ClippedBandMinWidth) / 2);
+            x0 = Math.Max(x0, (float)plot.X);
+            x1 = Math.Min(x1, right);
+            fade ??= new CanvasLinearGradientBrush(ds, Palette.WithAlpha(color, 0x60), Palette.WithAlpha(color, 0))
+            {
+                StartPoint = new Vector2(0, top),
+                EndPoint = new Vector2(0, top + ClippedBandHeight),
+            };
+            ds.FillRectangle(x0, top, x1 - x0, ClippedBandHeight, fade);
+            ds.FillRectangle(x0, top, x1 - x0, 2, color);
             if (peakValue > highest.Value)
-                highest = new ClippedPeak(x, peakValue, color);
-            peak = -1;
+                highest = new ClippedPeak(startX + peak * dx, peakValue, color);
+            (first, peak) = (-1, -1);
         }
+        fade?.Dispose();
     }
 
     /// <summary>
     /// Hover readout over a chart drawn with <paramref name="layout"/>: a light vertical bar on the sample nearest to
-    /// <paramref name="pointer"/>, a dot on each series and a box with the sample's time and the series' values.
+    /// <paramref name="pointer"/>, a dot on each series and a box with the sample's time (after <paramref name="title"/>)
+    /// and the series' values, kept within <paramref name="bounds"/>.
     /// </summary>
+    /// <param name="label">A series' name in the box (empty: the value alone); its <see cref="SeriesData.Label"/> by default.</param>
     public static void DrawHover(CanvasDrawingSession ds, ChartLayout layout, IReadOnlyList<SeriesData> series, SampleTimes times,
-        Point pointer, ChartStyle style, MonitorService monitor)
+        Point pointer, Rect bounds, ChartStyle style, Func<SeriesData, float, string> format, string? title = null, Func<SeriesData, string>? label = null)
     {
         if (layout.IsEmpty || series.Count == 0)
             return;
@@ -192,18 +207,19 @@ public static class ChartRenderer
         var lines = new CanvasTextLayout[series.Count + 1];
         try
         {
-            lines[0] = new CanvasTextLayout(ds, time, LegendFormat, 10_000, lineHeight);
+            lines[0] = new CanvasTextLayout(ds, title is null ? time : $"{title} · {time}", LegendFormat, 10_000, lineHeight);
             var width = (float)lines[0].LayoutBounds.Width;
             for (var i = 0; i < series.Count; i++)
             {
                 var s = series[i];
-                var value = s.Error is not null || s.Count <= back ? "–" : monitor.Format(s.Values[s.Count - 1 - back], s.Source.Unit);
-                lines[i + 1] = new CanvasTextLayout(ds, $"{s.Label}  {value}", LegendFormat, 10_000, lineHeight);
+                var value = s.Error is not null || s.Count <= back ? "–" : format(s, s.Values[s.Count - 1 - back]);
+                var name = label?.Invoke(s) ?? s.Label;
+                lines[i + 1] = new CanvasTextLayout(ds, name.Length == 0 ? value : $"{name}  {value}", LegendFormat, 10_000, lineHeight);
                 width = Math.Max(width, swatch + (float)lines[i + 1].LayoutBounds.Width);
             }
             float w = width + 2 * pad, h = lines.Length * lineHeight + 2 * pad;
-            var bx = x + 10 + w <= layout.Right ? x + 10 : Math.Max((float)plot.X, x - 10 - w);
-            var by = (float)Math.Clamp(pointer.Y - h / 2, 0, Math.Max(0, plot.Y + plot.Height - h));
+            var bx = x + 10 + w <= bounds.Right ? x + 10 : (float)Math.Max(bounds.X, x - 10 - w);
+            var by = (float)Math.Clamp(pointer.Y - h / 2, bounds.Y, Math.Max(bounds.Y, bounds.Bottom - h));
             ds.FillRoundedRectangle(bx, by, w, h, 4, 4, panel);
             ds.DrawRoundedRectangle(bx, by, w, h, 4, 4, Palette.CellBorder(style.Theme), 1);
             ds.DrawTextLayout(lines[0], new Vector2(bx + pad, by + pad), Palette.SubtleText(style.Theme));

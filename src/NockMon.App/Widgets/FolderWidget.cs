@@ -13,8 +13,8 @@ namespace NockMon.Widgets;
 
 /// <summary>
 /// A folder: its size (large), file count, growth over the chart's window, and size over time (axis fitted to the data,
-/// so growth shows on a big folder). The last scan and the largest subfolders are in the tooltip, and listed when the
-/// widget is tall enough. Double-click opens the folder.
+/// so growth shows on a big folder; hovering it shows the size at that time). The last scan and the largest subfolders are
+/// in the text's tooltip, and listed when the widget is tall enough. Double-click opens the folder.
 /// </summary>
 public sealed partial class FolderWidget : UserControl, IMonitorWidget
 {
@@ -27,7 +27,10 @@ public sealed partial class FolderWidget : UserControl, IMonitorWidget
     private readonly SeriesData _files;
     private readonly SeriesData[] _all;
     private readonly SeriesData[] _chart;
-    private readonly CanvasControl _canvas = new() { IsHitTestVisible = false };
+    private readonly SampleTimes _times = new();
+    private readonly CanvasControl _canvas = new();
+    private readonly ChartHover _hover;
+    private ChartLayout _layout;
     private readonly TextBlock _sizeText = new() { FontSize = 22, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
     private readonly TextBlock _filesText = new() { FontSize = 12, Opacity = 0.75, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, 3) };
     private readonly TextBlock _detail = new() { FontSize = 11, Opacity = 0.75, TextTrimming = TextTrimming.CharacterEllipsis };
@@ -51,24 +54,27 @@ public sealed partial class FolderWidget : UserControl, IMonitorWidget
         Grid.SetColumn(_filesText, 1);
         header.Children.Add(_filesText);
 
+        var info = new StackPanel { Spacing = 2, Children = { header, _detail } };
+        var surface = new Grid { Margin = new Thickness(0, 4, 0, 0), Children = { _canvas } };
+        Func<SeriesData, float, string> format = (_, v) => monitor.Format(v, MetricUnit.Bytes);
+        _hover = new ChartHover(surface, _canvas, (ds, pointer, bounds) =>
+            ChartRenderer.DrawHover(ds, _layout, _chart, _times, pointer, bounds, CurrentStyle, format));
         var grid = new Grid { Padding = new Thickness(8, 0, 8, 6), RowSpacing = 2 };
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.Children.Add(header);
-        Grid.SetRow(_detail, 1);
-        grid.Children.Add(_detail);
-        Grid.SetRow(_canvas, 2);
-        _canvas.Margin = new Thickness(0, 4, 0, 0);
-        grid.Children.Add(_canvas);
-        Grid.SetRow(_largest, 3);
+        grid.Children.Add(info);
+        Grid.SetRow(surface, 1);
+        grid.Children.Add(surface);
+        Grid.SetRow(_largest, 2);
         _largest.Margin = new Thickness(0, 4, 0, 0);
         grid.Children.Add(_largest);
+        Grid.SetRowSpan(_hover.Overlay, 3); // The readout may spill over the text: a short chart has no room for it.
+        grid.Children.Add(_hover.Overlay);
         Content = grid;
         Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); // Double-click anywhere.
 
-        ToolTipService.SetToolTip(this, _tip);
+        ToolTipService.SetToolTip(info, _tip); // Not over the chart: it would cover the readout.
         _canvas.Draw += OnDraw;
         DoubleTapped += (_, e) =>
         {
@@ -76,7 +82,11 @@ public sealed partial class FolderWidget : UserControl, IMonitorWidget
             OpenFolder();
         };
         SizeChanged += (_, _) => _largest.Visibility = ActualHeight >= ListMinHeight && _largest.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        Unloaded += (_, _) => _canvas.RemoveFromVisualTree();
+        Unloaded += (_, _) =>
+        {
+            _canvas.RemoveFromVisualTree();
+            _hover.Overlay.RemoveFromVisualTree();
+        };
         ActualThemeChanged += (_, _) => _canvas.Invalidate();
     }
 
@@ -96,7 +106,7 @@ public sealed partial class FolderWidget : UserControl, IMonitorWidget
         }
 
         var window = TimeSpan.FromSeconds(_config.WindowSeconds);
-        _windowSamples = SeriesData.ReadAll(_monitor, _all, window);
+        _windowSamples = SeriesData.ReadAll(_monitor, _all, window, _times);
         var scanner = _monitor.Engine.Folders;
         var last = scanner.Latest(scope);
         var now = DateTime.UtcNow;
@@ -221,7 +231,11 @@ public sealed partial class FolderWidget : UserControl, IMonitorWidget
         return $"{(int)span.TotalDays} d {span.Hours} h";
     }
 
-    private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args) =>
-        ChartRenderer.Draw(args.DrawingSession, new Rect(0, 0, sender.ActualWidth, sender.ActualHeight), _chart, _windowSamples,
-            new ChartStyle(Stacked: false, ShowLegend: false, ShowGrid: true, ActualTheme, ZeroBased: false), _monitor);
+    private ChartStyle CurrentStyle => new(Stacked: false, ShowLegend: false, ShowGrid: true, ActualTheme, ZeroBased: false);
+
+    private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
+    {
+        _layout = ChartRenderer.Draw(args.DrawingSession, new Rect(0, 0, sender.ActualWidth, sender.ActualHeight), _chart, _windowSamples, CurrentStyle, _monitor);
+        _hover.ChartDrawn();
+    }
 }

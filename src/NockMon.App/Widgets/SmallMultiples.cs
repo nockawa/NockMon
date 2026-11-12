@@ -32,12 +32,7 @@ public static class SmallMultiples
         int windowSamples, double yMax, int fixedColumns, Color fill, Color overlayFill, ElementTheme theme, Func<SeriesData, string> formatValue,
         Color? stroke = null, Color? overlayStroke = null, bool boldText = false)
     {
-        var (columns, rows) = GridArrangement.Arrange(cells.Count, size.Width, size.Height, fixedColumns);
-        if (columns == 0)
-            return;
-        var cellWidth = (float)((size.Width - Gap * (columns - 1)) / columns);
-        var cellHeight = (float)((size.Height - Gap * (rows - 1)) / rows);
-        if (cellWidth < 4 || cellHeight < 4)
+        if (!Arrange(size, cells.Count, fixedColumns, out var columns, out var cellWidth, out var cellHeight))
             return;
 
         var border = Palette.CellBorder(theme);
@@ -85,6 +80,52 @@ public static class SmallMultiples
             ds.DrawText(series.Label, new Rect(x + 3, y + 1, cellWidth * 0.65, 14), subtle, boldText ? BoldLabelFormat : LabelFormat);
             ds.DrawText(formatValue(series), new Rect(x, y + 1, cellWidth - 3, 14), text, boldText ? BoldValueFormat : ValueFormat);
         }
+    }
+
+    /// <returns>False when the cells are too small to draw.</returns>
+    private static bool Arrange(Size size, int count, int fixedColumns, out int columns, out float cellWidth, out float cellHeight)
+    {
+        (columns, var rows) = GridArrangement.Arrange(count, size.Width, size.Height, fixedColumns);
+        cellWidth = cellHeight = 0;
+        if (columns == 0)
+            return false;
+        cellWidth = (float)((size.Width - Gap * (columns - 1)) / columns);
+        cellHeight = (float)((size.Height - Gap * (rows - 1)) / rows);
+        return cellWidth >= 4 && cellHeight >= 4;
+    }
+
+    [ThreadStatic] private static SeriesData[]? _hoverOne, _hoverTwo;
+
+    /// <summary>
+    /// Hover readout (<see cref="ChartRenderer.DrawHover"/>) on the cell under <paramref name="pointer"/>: its series and
+    /// overlay; the box's first line is the <paramref name="title"/> of the cell's series, if any, and the time.
+    /// </summary>
+    public static void DrawHover(CanvasDrawingSession ds, Size size, IReadOnlyList<SeriesData> cells, IReadOnlyList<SeriesData>? overlay,
+        SampleTimes times, int windowSamples, double yMax, int fixedColumns, Point pointer, Rect bounds, ElementTheme theme,
+        Func<SeriesData, float, string> format, Func<SeriesData, string>? title = null, Func<SeriesData, string>? label = null)
+    {
+        if (pointer.X < 0 || pointer.Y < 0 || !Arrange(size, cells.Count, fixedColumns, out var columns, out var cellWidth, out var cellHeight))
+            return;
+        int column = (int)(pointer.X / (cellWidth + Gap)), row = (int)(pointer.Y / (cellHeight + Gap));
+        var i = row * columns + column;
+        if (column >= columns || i >= cells.Count)
+            return;
+        var cell = new Rect(column * (cellWidth + Gap), row * (cellHeight + Gap), cellWidth, cellHeight);
+        var layout = new ChartLayout(cell, 0, yMax, (float)(cell.Width / Math.Max(1, windowSamples - 1)), windowSamples);
+        SeriesData[] series;
+        if (overlay is not null && i < overlay.Count)
+        {
+            series = _hoverTwo ??= new SeriesData[2];
+            series[1] = overlay[i];
+        }
+        else
+        {
+            series = _hoverOne ??= new SeriesData[1];
+        }
+        series[0] = cells[i];
+        ChartRenderer.DrawHover(ds, layout, series, times, pointer, bounds, new ChartStyle(false, false, false, theme), format,
+            title?.Invoke(cells[i]), label);
+        Array.Clear(series); // No reference kept to a widget's series.
     }
 
     private static void Fill(CanvasDrawingSession ds, CanvasPathBuilder? path, Color color)

@@ -26,8 +26,9 @@ Only metrics marked *chartable* below have history. Process series are sampled a
 on every matching process.
 
 The axis fits most of the data: when a few short spikes (under 3 % of the window) exceed three times the rest, they go
-above the axis, marked with a caret, and the highest one's value is shown (*peak 205 MB/s*). Hover a chart for the time
-and the series' values at the pointer.
+above the axis, marked with a band on the top edge, and the highest one's value is shown (*peak 205 MB/s*). Hover a chart for the time
+and the series' values at the pointer; the same readout works on every graph: a value's sparkline, a folder's size, a
+per-CPU or GPU engine cell.
 
 ### Value
 
@@ -38,7 +39,7 @@ One metric's latest value, large, over a sparkline. Default size 2×2, minimum 1
 | Source | Any series a chart can show. |
 | Sparkline | Time span of the sparkline (default 60 s). |
 
-An untitled value shows the metric's name on hover.
+An untitled value shows the metric's name when hovering the value.
 
 ### Value list
 
@@ -80,8 +81,8 @@ Engine names arrive a moment after start ("Engine N" until then).
 
 A folder's size and file count over time: a downloads or temp folder filling up, a build output, a log or cache folder
 that grows, a backup target. Shows the size, the file count, the growth over the window ("+1.2 GB, +340 files in 1 h")
-and the size over time, with an axis fitted to the data so growth shows on a large folder. Hover for the last scan
-(when, how long, unreadable folders) and the largest subfolders, also listed under the chart when the widget is tall
+and the size over time, with an axis fitted to the data so growth shows on a large folder. Hover the text for the last
+scan (when, how long, unreadable folders) and the largest subfolders, also listed under the chart when the widget is tall
 enough. Double-click opens the folder. Default size 5×4, minimum 2×2.
 
 | Option | Meaning |
