@@ -64,11 +64,16 @@ internal static unsafe partial class D3dkmt
         return true;
     }
 
-    /// <summary>Engine running time, 100 ns units (D3DKMT_QUERYSTATISTICS_NODE_INFORMATION.GlobalInformation.RunningTime).</summary>
-    public static long NodeRunningTime(long luid, uint node)
+    /// <summary>
+    /// Engine running time, 100 ns units (D3DKMT_QUERYSTATISTICS_NODE_INFORMATION.GlobalInformation.RunningTime).
+    /// Only deltas are meaningful: NVIDIA reports negative values for some engines (3D on an RTX 4070 Ti), still counting up.
+    /// </summary>
+    public static bool NodeRunningTime(long luid, uint node, out long runningTime)
     {
         var q = stackalloc byte[StatisticsSize];
-        return Query(q, QueryNode, luid, node) ? *(long*)(q + ResultOffset) : -1;
+        var ok = Query(q, QueryNode, luid, node);
+        runningTime = ok ? *(long*)(q + ResultOffset) : 0;
+        return ok;
     }
 
     /// <summary>D3DKMT_ADAPTER_PERFDATA (WDDM 2.4+): memory clock (Hz), fan (rpm), power (‰), temperature (deci-°C).</summary>

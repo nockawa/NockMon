@@ -24,8 +24,8 @@ public sealed class GpuProbe : IGpuSource
         public readonly GpuAdapterInfo Info = info;
         public readonly uint Segments = segments;
         public readonly nint NvmlDevice = nvmlDevice;
-        public readonly long[] PreviousRunning = Enumerable.Repeat(-1L, info.Engines.Length).ToArray();
-        public readonly long[] PreviousTimestamp = new long[info.Engines.Length];
+        public readonly long[] PreviousRunning = new long[info.Engines.Length];
+        public readonly long[] PreviousTimestamp = new long[info.Engines.Length]; // 0: no previous reading.
         public bool[] Watched = new bool[info.Engines.Length];
     }
 
@@ -144,9 +144,13 @@ public sealed class GpuProbe : IGpuSource
             stats.Engines[e] = double.NaN;
             if (e >= state.Watched.Length || !state.Watched[e])
                 continue;
-            var running = D3dkmt.NodeRunningTime(state.Info.Luid, (uint)e);
+            if (!D3dkmt.NodeRunningTime(state.Info.Luid, (uint)e, out var running))
+            {
+                state.PreviousTimestamp[e] = 0;
+                continue;
+            }
             var timestamp = Stopwatch.GetTimestamp();
-            if (running >= 0 && state.PreviousRunning[e] >= 0)
+            if (state.PreviousTimestamp[e] != 0)
             {
                 var elapsed = Stopwatch.GetElapsedTime(state.PreviousTimestamp[e], timestamp).Ticks;
                 if (elapsed > 0)
