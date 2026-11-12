@@ -17,6 +17,7 @@ public partial class App : Application
     private SamplingEngine? _engine;
     private GpuProbe? _gpu;
     private DriveTemperatureSource? _drives;
+    private NetworkAdapterSource? _network;
 
     public App()
     {
@@ -56,11 +57,13 @@ public partial class App : Application
         var monitor = new MonitorService(_engine, DispatcherQueue.GetForCurrentThread(), settings.CpuScale);
         // Before the window: layouts referencing plugin widgets find them registered.
         Plugins.PluginRuntime.Initialize(settings.DevPluginFolders, Environment.GetCommandLineArgs());
-        // Built-in external sources (drive temperatures), then the plugins'.
+        // Built-in external sources (drive temperatures, network adapters), then the plugins'.
         _drives = new DriveTemperatureSource();
         _drives.Start();
-        _engine.SetExternalSources([_drives, .. Plugins.PluginRuntime.MetricSources]);
-        Plugins.PluginRuntime.MetricSourcesChanged += () => _engine.SetExternalSources([_drives, .. Plugins.PluginRuntime.MetricSources]);
+        _network = new NetworkAdapterSource();
+        _network.Start();
+        _engine.SetExternalSources([_drives, _network, .. Plugins.PluginRuntime.MetricSources]);
+        Plugins.PluginRuntime.MetricSourcesChanged += () => _engine.SetExternalSources([_drives, _network, .. Plugins.PluginRuntime.MetricSources]);
 
         _window = new MainWindow(session, monitor);
         _window.Closed += (_, _) => Shutdown();
@@ -85,6 +88,7 @@ public partial class App : Application
         _engine?.Dispose();
         Plugins.PluginRuntime.DisposeMetricSources(); // After the engine: it reads them until it stops.
         _drives?.Dispose();
+        _network?.Dispose();
         _events?.Dispose(); // Stops the kernel session: it would otherwise outlive the process.
         _gpu?.Dispose();
         _probe?.Dispose();
