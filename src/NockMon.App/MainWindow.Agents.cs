@@ -30,19 +30,26 @@ public sealed partial class MainWindow
     private void SetUpAgents()
     {
         _agents = new Agents.AgentAccess(_session, _monitor.Engine, DispatcherQueue, new AgentLayoutHost(this));
-        _agents.Changed += UpdateAgentsButton;
+        _agents.Changed += UpdateAgentsStatus;
         Closed += (_, _) => _agents.Dispose();
-        UpdateAgentsButton();
+        UpdateAgentsStatus();
     }
 
-    private void UpdateAgentsButton()
+    /// <summary>The toolbar icon takes the accent color while an agent is connected; in compact mode (no toolbar), a badge
+    /// on the board's top right shows instead.</summary>
+    private void UpdateAgentsStatus()
     {
-        var clients = _agents!.Clients;
+        if (_agents is null)
+            return;
+        var clients = _agents.Clients;
         if (clients.Count > 0)
             AgentsIcon.Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"];
         else
             AgentsIcon.ClearValue(IconElement.ForegroundProperty); // Back to the button's foreground.
-        ToolTipService.SetToolTip(AgentsButton, $"AI agents (MCP): {AgentStatus()}");
+        var tip = $"AI agents (MCP): {AgentStatus()}";
+        ToolTipService.SetToolTip(AgentsButton, tip);
+        ToolTipService.SetToolTip(AgentsBadge, tip);
+        AgentsBadge.Visibility = _compact && clients.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private string AgentStatus()

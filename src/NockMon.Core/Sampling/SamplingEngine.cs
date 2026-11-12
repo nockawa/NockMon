@@ -58,6 +58,7 @@ public sealed class SamplingEngine : IDisposable
     private readonly Gpu.IGpuSource? _gpu;
     private readonly Dictionary<int, Etw.ProcessIoTotals> _scanIo = new();
     private readonly List<Etw.DriverTotals> _scanDrivers = [];
+    private readonly Dictionary<int, Etw.RuntimeTotals> _scanRuntimes = new();
     private readonly Dictionary<int, double> _gpuByPid = new();
     private readonly FolderScanner _folders;
 
@@ -206,8 +207,12 @@ public sealed class SamplingEngine : IDisposable
                 if (_events is not null)
                 {
                     _events.HarvestScan(_scanIo, _scanDrivers);
+                    _events.HarvestRuntime(_scanRuntimes);
                     if (scanned)
+                    {
                         SampleProcessor.ApplyScanEvents(_spareTable, _scanIo, _scanDrivers);
+                        SampleProcessor.ApplyRuntimeEvents(_spareTable, _scanRuntimes);
+                    }
                 }
                 if (_gpu is not null)
                 {

@@ -32,6 +32,17 @@ internal sealed class FakeEvents : IKernelEventSource
         Drivers.Clear();
     }
 
+    public Dictionary<int, RuntimeTotals> Runtimes = new();
+
+    public void HarvestRuntime(Dictionary<int, RuntimeTotals> processes)
+    {
+        processes.Clear();
+        foreach (var (k, v) in Runtimes)
+            processes[k] = v;
+        foreach (var k in Runtimes.Keys)
+            Runtimes[k] = new RuntimeTotals { HeapBytes = Runtimes[k].HeapBytes };
+    }
+
     public List<ProcessEvent> Recent = [];
 
     public void CopyRecentEvents(List<ProcessEvent> destination)

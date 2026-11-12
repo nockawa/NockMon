@@ -33,7 +33,7 @@ public static partial class Docs
                 Each series is a metric of a source: the **system**, one **logical CPU**, the **processes** matching a name pattern (summed), a **kernel object** type, or a **GPU**. All series of a chart must share a unit.
 
                 - **Stacked** draws series on top of each other: for parts of a whole (user + kernel CPU, several processes).
-                - History is kept for an hour by default (settings); the chart shows the chosen window of it.
+                - History is kept for an hour by default (settings); the chart shows the chosen window of it. Hover it for the time and the values at the pointer (also on sparklines and per-CPU or GPU engine cells).
                 - Process series are sampled at the fast rate: the app keeps a handle on every matching process. {PatternSyntax}
                 - Hover the metric picker's entries in the editor for what each metric means.
                 """),
@@ -103,7 +103,7 @@ public static partial class Docs
             WidgetKind.Folder => D(title,
                 "A folder's size and file count over time, with its growth and its largest subfolders.",
                 $"""
-                Watches a folder: a downloads or temp folder filling up, a build output, a log or cache folder that grows, a backup target. Shows the size, the file count, the growth over the chart's window, and the size over time; hover for the last scan and the largest subfolders, which are also listed when the widget is tall enough.
+                Watches a folder: a downloads or temp folder filling up, a build output, a log or cache folder that grows, a backup target. Shows the size, the file count, the growth over the chart's window, and the size over time; hover the text for the last scan and the largest subfolders, which are also listed when the widget is tall enough, and the chart for the size at that time.
 
                 - **Subfolders**: with them, the whole tree is walked. Junctions and folder symbolic links are not followed (no loops, no double counting); OneDrive folders are walked.
                 - **Include**: file name patterns counted, e.g. `*.log; *.tmp` (all files when empty). **Exclude**: folder names skipped with their content, e.g. `node_modules; .git; bin; obj`.

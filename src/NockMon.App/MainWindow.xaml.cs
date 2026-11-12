@@ -375,6 +375,7 @@ public sealed partial class MainWindow : Window
         Toolbar.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         Info.IsOpen = false;
         UpdateRail();
+        UpdateAgentsStatus();
         if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
             presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: !compact);
         // WinUI: hiding the title bar sets AppWindow.TitleBar.ExtendsContentIntoTitleBar, and showing it again does not

@@ -124,7 +124,7 @@ public sealed class ProcessQuery
     }
 
     /// <summary>
-    /// Sums rates and sizes. Identity (PID, create time, parent) is the earliest-started instance's, together: the pair
+    /// Sums rates and sizes (the longest GC pause is the longest of the instances). Identity (PID, create time, parent) is the earliest-started instance's, together: the pair
     /// stays a real process key (icons, actions), whatever order the scan lists the processes in.
     /// </summary>
     private static void Accumulate(ref ProcessRow row, in ProcessStats p)
@@ -141,6 +141,16 @@ public sealed class ProcessQuery
         s.NetSendBytes += p.NetSendBytes;
         s.NetRecvBytes += p.NetRecvBytes;
         s.GpuPercent += p.GpuPercent;
+        s.GcPausePercent += p.GcPausePercent;
+        s.GcPauseMaxMs = Math.Max(s.GcPauseMaxMs, p.GcPauseMaxMs);
+        s.GcRate += p.GcRate;
+        s.Gen2GcRate += p.Gen2GcRate;
+        s.ManagedHeap += p.ManagedHeap;
+        s.AllocationRate += p.AllocationRate;
+        s.FreedRate += p.FreedRate;
+        s.PromotedRate += p.PromotedRate;
+        s.ExceptionRate += p.ExceptionRate;
+        s.ContentionRate += p.ContentionRate;
         s.Cpu += p.Cpu;
         s.CpuUser += p.CpuUser;
         s.CpuKernel += p.CpuKernel;

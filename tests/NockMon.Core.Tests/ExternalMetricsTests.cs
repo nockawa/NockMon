@@ -181,4 +181,61 @@ public class DriveTemperatureTests
         Assert.All(source.Metrics, m => Assert.Equal(MetricUnit.Celsius, m.Unit));
         Assert.Contains(values, v => v is > 0 and < 100);
     }
+
+    [Fact]
+    public void NetworkAdapters_Filter()
+    {
+        Assert.True(NetworkAdapterSource.IsPublished(6, 1, 1));    // Ethernet, hardware, up.
+        Assert.True(NetworkAdapterSource.IsPublished(6, 0, 1));    // vEthernet: virtual, up.
+        Assert.False(NetworkAdapterSource.IsPublished(6, 1, 2));   // Down.
+        Assert.False(NetworkAdapterSource.IsPublished(6, 3, 1));   // Filter layer.
+        Assert.False(NetworkAdapterSource.IsPublished(24, 0, 1));  // Loopback.
+        Assert.False(NetworkAdapterSource.IsPublished(131, 0, 1)); // Tunnel.
+    }
+
+    /// <summary>MIB_IF_ROW2 offsets, checked against .NET's own reading of the same counters.</summary>
+    [Fact]
+    public unsafe void NetworkAdapters_RowLayoutMatchesNetworkInterface()
+    {
+        var expected = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+            .Where(n => n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+            .ToDictionary(n => Guid.Parse(n.Id), n => (n.Name, n.GetIPStatistics().BytesReceived));
+        Assert.Equal(0u, NetworkAdapterSource.GetIfTable2(out var table));
+        try
+        {
+            var rows = (byte*)table + 8;
+            var matched = 0;
+            for (var i = 0; i < *(uint*)table; i++)
+            {
+                var row = rows + i * (long)NetworkAdapterSource.RowSize;
+                if (!expected.TryGetValue(*(Guid*)(row + NetworkAdapterSource.GuidOffset), out var e))
+                    continue;
+                Assert.Equal(e.Name, new string((char*)(row + NetworkAdapterSource.AliasOffset)));
+                Assert.Equal(1u, *(uint*)(row + NetworkAdapterSource.OperStatusOffset));
+                // Read a moment apart: within 100 MB of each other.
+                Assert.InRange((double)*(ulong*)(row + NetworkAdapterSource.InOctetsOffset), e.BytesReceived - 1e8, e.BytesReceived + 1e8);
+                matched++;
+            }
+            Assert.True(matched > 0);
+        }
+        finally
+        {
+            NetworkAdapterSource.FreeMibTable(table);
+        }
+    }
+
+    [Fact]
+    public void LiveNetworkAdapters_PublishReceiveAndSend()
+    {
+        using var source = new NetworkAdapterSource();
+        source.Start();
+        for (var i = 0; i < 50 && source.Metrics.Count == 0; i++)
+            Thread.Sleep(100);
+        Assert.NotEmpty(source.Metrics);
+        Assert.All(source.Metrics, m => Assert.Equal(MetricUnit.BytesPerSecond, m.Unit));
+        Thread.Sleep(2500); // Two reads: rates.
+        var values = new double[source.Metrics.Count];
+        Assert.True(source.TryRead(source.Metrics, values));
+        Assert.All(values, v => Assert.True(v >= 0));
+    }
 }

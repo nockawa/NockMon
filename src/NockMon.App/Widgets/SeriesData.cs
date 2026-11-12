@@ -25,14 +25,15 @@ public sealed class SeriesData(SeriesRef source, string label, Color color)
     public static int SamplesFor(TimeSpan window, TimeSpan interval, int capacity) =>
         Math.Clamp((int)Math.Ceiling(window / interval), 2, capacity);
 
-    /// <summary>Reads all series in one engine lock.</summary>
+    /// <summary>Reads all series in one engine lock, and the samples' times into <paramref name="times"/> if given.</summary>
     /// <returns>Window size in samples.</returns>
-    public static int ReadAll(MonitorService monitor, IReadOnlyList<SeriesData> series, TimeSpan window) =>
-        monitor.Engine.Read((series, window, monitor.Engine.Interval), static (state, _, history) =>
+    public static int ReadAll(MonitorService monitor, IReadOnlyList<SeriesData> series, TimeSpan window, SampleTimes? times = null) =>
+        monitor.Engine.Read((series, window, monitor.Engine.Interval, times), static (state, _, history) =>
         {
             var samples = SamplesFor(state.window, state.Item3, history.Capacity);
             foreach (var s in state.series)
                 s.ReadFrom(history, samples);
+            state.times?.ReadFrom(history, samples);
             return samples;
         });
 
@@ -50,5 +51,20 @@ public sealed class SeriesData(SeriesRef source, string label, Color color)
             Count = 0;
             Error = e.Message;
         }
+    }
+}
+
+/// <summary>Wall-clock times (UTC) of the samples read with <see cref="SeriesData.ReadAll"/>, aligned on the newest.</summary>
+public sealed class SampleTimes
+{
+    public DateTime[] Values { get; private set; } = [];
+
+    public int Count { get; private set; }
+
+    internal void ReadFrom(HistoryStore history, int samples)
+    {
+        if (Values.Length < samples)
+            Values = new DateTime[samples];
+        Count = history.ReadTimestamps(Values.AsSpan(0, samples));
     }
 }

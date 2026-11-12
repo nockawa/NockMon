@@ -66,6 +66,18 @@
     </ItemGroup>
   </Target>
 
+  <!-- Null-type guard on the generated XAML metadata provider: it implements a member of that provider, which exists after
+       the second XAML pass only (the first one compiles the app without it). -->
+  <ItemGroup>
+    <Compile Remove="App.MetadataProvider.cs" />
+    <None Include="App.MetadataProvider.cs" />
+  </ItemGroup>
+  <Target Name="CompileMetadataProviderGuard" AfterTargets="MarkupCompilePass2">
+    <ItemGroup>
+      <Compile Include="App.MetadataProvider.cs" />
+    </ItemGroup>
+  </Target>
+
   <!-- Unpackaged publish omits the project .pri (compiled XAML + resources); the MSIX tooling only ships it in packages. -->
   <Target Name="PublishProjectPri" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="'$(AppxPackage)' != 'true'">
     <ItemGroup>

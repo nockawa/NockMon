@@ -70,10 +70,17 @@ internal sealed partial class NewsBell : Button
         var list = new StackPanel { Spacing = 12 };
         foreach (var item in _items)
         {
-            // https only: the links come from fetched pages, and NockMon (which opens them) runs as administrator.
-            var link = new Hyperlink { NavigateUri = Uri.TryCreate(item.Url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? uri : null };
+            // https only: the links come from fetched pages. Opened as the user (Browser), not with NavigateUri: NockMon
+            // runs as administrator.
+            var uri = Uri.TryCreate(item.Url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps ? u : null;
+            var link = new Hyperlink();
             link.Inlines.Add(new Run { Text = item.Text });
-            link.Click += (_, _) => NewsService.MarkRead([item]);
+            link.Click += (_, _) =>
+            {
+                NewsService.MarkRead([item]);
+                if (uri is not null)
+                    Browser.Open(uri);
+            };
             var text = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 13 };
             text.Inlines.Add(link);
             list.Children.Add(new StackPanel

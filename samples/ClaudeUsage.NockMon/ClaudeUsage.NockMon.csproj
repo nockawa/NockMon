@@ -12,7 +12,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
 
     <PackageId>ClaudeUsage.NockMon</PackageId>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <Title>Claude Usage</Title>
     <Authors>nockawa</Authors>
     <Description>NockMon widget: your Claude subscription's weekly usage — used vs. elapsed, on pace / ahead / behind, reset countdown, burn pace vs. target, Claude's service status and news. From the claude-usage tool.</Description>
@@ -25,7 +25,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <NockMonSdkVersion Condition="'$(NockMonSdkVersion)' == ''">1.0.0</NockMonSdkVersion>
+    <NockMonSdkVersion Condition="'$(NockMonSdkVersion)' == ''">1.1.0</NockMonSdkVersion>
   </PropertyGroup>
 
   <ItemGroup>

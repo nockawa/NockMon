@@ -241,22 +241,25 @@ public class GpuProbeIntegrationTests
         if (gpu.Adapters.Count == 0)
             Assert.Skip("No GPU adapter.");
         var stats = new List<GpuStats>();
-        var first = gpu.Adapters[0];
-        gpu.SetWatchedEngines([(first.Name, "*")]);
+        gpu.SetWatchedEngines(gpu.Adapters.Select(a => (a.Name, "*")));
         gpu.Collect(stats);
         Thread.Sleep(300);
         gpu.Collect(stats);
 
         Assert.Equal(gpu.Adapters.Count, stats.Count);
-        var s = stats[0];
-        Assert.True(s[GpuMetric.DedicatedTotal] > 0 || s[GpuMetric.SharedTotal] > 0);
-        // Adapters without engine statistics (basic display adapters, CI virtual machines) report NaN: no data.
-        for (var e = 0; e < s.Engines.Length; e++)
+        Assert.True(stats[0][GpuMetric.DedicatedTotal] > 0 || stats[0][GpuMetric.SharedTotal] > 0);
+        // Every adapter: some report negative running times (NVIDIA's 3D engine), still valid. Adapters without engine
+        // statistics (basic display adapters, CI virtual machines) report NaN: no data.
+        for (var i = 0; i < stats.Count; i++)
         {
-            if (D3dkmt.NodeRunningTime(first.Luid, (uint)e) >= 0)
-                Assert.InRange(s.Engines[e], 0, 100);
-            else
-                Assert.True(double.IsNaN(s.Engines[e]), $"Engine {e} has no statistics but reports {s.Engines[e]}.");
+            var (adapter, s) = (gpu.Adapters[i], stats[i]);
+            for (var e = 0; e < s.Engines.Length; e++)
+            {
+                if (D3dkmt.NodeRunningTime(adapter.Luid, (uint)e, out _))
+                    Assert.InRange(s.Engines[e], 0, 100);
+                else
+                    Assert.True(double.IsNaN(s.Engines[e]), $"{adapter.Name} engine {e} has no statistics but reports {s.Engines[e]}.");
+            }
         }
 
         var nvidia = stats.FirstOrDefault(x => gpu.Adapters.First(a => a.Name == x.Name).HasNvml);

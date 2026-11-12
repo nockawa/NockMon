@@ -33,6 +33,8 @@ internal static class ProcessMenu
         ProcessField.NetBytes, ProcessField.Gpu, ProcessField.Handles, ProcessField.Threads,
     ];
 
+    private static readonly ProcessField[] DotNetChartFields = Enum.GetValues<ProcessField>().Where(MetricCatalog.IsDotNetField).ToArray();
+
     private static readonly PriorityClass[] Priorities =
         [PriorityClass.Realtime, PriorityClass.High, PriorityClass.AboveNormal, PriorityClass.Normal, PriorityClass.BelowNormal, PriorityClass.Idle];
 
@@ -81,6 +83,11 @@ internal static class ProcessMenu
         var chart = new MenuFlyoutSubItem { Text = $"Chart (all {target.Name})", Icon = Glyph("") };
         foreach (var field in ChartFields)
             chart.Items.Add(Item(MetricCatalog.Get(field).DisplayName, null, () => ChartRequested?.Invoke(target.Name, field)));
+        var dotNet = new MenuFlyoutSubItem { Text = ".NET runtime" };
+        foreach (var field in DotNetChartFields)
+            dotNet.Items.Add(Item(MetricCatalog.Get(field).DisplayName, null, () => ChartRequested?.Invoke(target.Name, field)));
+        chart.Items.Add(new MenuFlyoutSeparator());
+        chart.Items.Add(dotNet);
         menu.Items.Add(chart);
         menu.Items.Add(new MenuFlyoutSeparator());
 

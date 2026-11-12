@@ -8,15 +8,18 @@ using Windows.Foundation;
 
 namespace NockMon.Widgets;
 
-/// <summary>Current value (scaled to the widget) over a sparkline.</summary>
+/// <summary>Current value (scaled to the widget) over a sparkline; hovering the sparkline shows the value at that time.</summary>
 public sealed partial class ValueWidget : UserControl, IMonitorWidget
 {
     private readonly MonitorService _monitor;
     private readonly ValueWidgetConfig _config;
     private readonly SeriesData[] _series;
-    private readonly CanvasControl _sparkline = new() { IsHitTestVisible = false };
+    private readonly SampleTimes _times = new();
+    private readonly CanvasControl _sparkline = new();
+    private readonly ChartHover _hover;
     private readonly TextBlock _value = new() { FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
     private int _windowSamples = 2;
+    private ChartLayout _layout;
 
     public ValueWidget(ValueWidgetConfig config, MonitorService monitor)
     {
@@ -29,14 +32,27 @@ public sealed partial class ValueWidget : UserControl, IMonitorWidget
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var viewbox = new Viewbox { Child = _value, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.Both, HorizontalAlignment = HorizontalAlignment.Left };
         grid.Children.Add(viewbox);
-        Grid.SetRow(_sparkline, 1);
-        grid.Children.Add(_sparkline);
+        var surface = new Grid { Children = { _sparkline } };
+        Grid.SetRow(surface, 1);
+        grid.Children.Add(surface);
+        // The readout spans the widget (the sparkline alone is often too short for it); the value alone, the widget is
+        // too narrow for the series' name, already in its title or tooltip.
+        Func<SeriesData, float, string> format = (s, v) => monitor.Format(v, s.Source.Unit);
+        Func<SeriesData, string> noLabel = _ => "";
+        _hover = new ChartHover(surface, _sparkline, (ds, pointer, bounds) =>
+            ChartRenderer.DrawHover(ds, _layout, _series, _times, pointer, bounds, CurrentStyle, format, label: noLabel));
+        Grid.SetRowSpan(_hover.Overlay, 2);
+        grid.Children.Add(_hover.Overlay);
         Content = grid;
 
-        if (string.IsNullOrEmpty(config.Title))
-            ToolTipService.SetToolTip(this, config.Source.DefaultLabel);
+        if (string.IsNullOrEmpty(config.Title)) // On the value only: over the sparkline, it would cover the readout.
+            ToolTipService.SetToolTip(viewbox, config.Source.DefaultLabel);
         _sparkline.Draw += OnDraw;
-        Unloaded += (_, _) => _sparkline.RemoveFromVisualTree();
+        Unloaded += (_, _) =>
+        {
+            _sparkline.RemoveFromVisualTree();
+            _hover.Overlay.RemoveFromVisualTree();
+        };
         ActualThemeChanged += (_, _) => _sparkline.Invalidate();
     }
 
@@ -48,13 +64,17 @@ public sealed partial class ValueWidget : UserControl, IMonitorWidget
 
     public void Refresh()
     {
-        _windowSamples = SeriesData.ReadAll(_monitor, _series, TimeSpan.FromSeconds(_config.SparklineSeconds));
+        _windowSamples = SeriesData.ReadAll(_monitor, _series, TimeSpan.FromSeconds(_config.SparklineSeconds), _times);
         var s = _series[0];
         _value.Text = s.Error is not null ? "error" : s.Count > 0 ? _monitor.Format(s.Latest, s.Source.Unit) : "–";
         _sparkline.Invalidate();
     }
 
-    private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args) =>
-        ChartRenderer.Draw(args.DrawingSession, new Rect(0, 0, sender.ActualWidth, sender.ActualHeight), _series, _windowSamples,
-            new ChartStyle(Stacked: false, ShowLegend: false, ShowGrid: false, ActualTheme), _monitor);
+    private ChartStyle CurrentStyle => new(Stacked: false, ShowLegend: false, ShowGrid: false, ActualTheme);
+
+    private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
+    {
+        _layout = ChartRenderer.Draw(args.DrawingSession, new Rect(0, 0, sender.ActualWidth, sender.ActualHeight), _series, _windowSamples, CurrentStyle, _monitor);
+        _hover.ChartDrawn();
+    }
 }

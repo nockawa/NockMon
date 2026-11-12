@@ -195,8 +195,9 @@ A few more settings live only in `settings.json` (edit it while NockMon is close
 
 ## Kernel events (ETW)
 
-Drivers, DPC/ISR latency, process events, per-process disk and network, and system disk and network throughput come
-from a kernel event tracing (ETW) session. It needs administrator rights. NockMon uses a private session
+Drivers, DPC/ISR latency, process events, per-process disk and network, system disk and network throughput, and the
+.NET runtime metrics of .NET processes (GCs, pauses, managed heap, allocations, exceptions, lock contentions) come
+from an event tracing (ETW) session. It needs administrator rights. NockMon uses a private session
 (`NockMon-Kernel`), so it doesn't conflict with xperf, Process Monitor or other tools using the "NT Kernel Logger".
 
 If the session can't start, a bar under the toolbar says why, and the affected widgets stay empty. Under very heavy

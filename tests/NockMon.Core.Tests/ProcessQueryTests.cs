@@ -117,6 +117,41 @@ public class ProcessQueryTests
     public void NiceCeiling(double value, MetricUnit unit, double expected) =>
         Assert.Equal(expected, AxisScale.NiceCeiling(value, unit), 6);
 
+    private const float Mb = 1024 * 1024;
+
+    /// <summary>300 samples around 5–8 MB/s.</summary>
+    private static float[] Bulk() => Enumerable.Range(0, 300).Select(i => (5 + i % 4) * Mb).ToArray();
+
+    [Fact]
+    public void SpikeAwareCeiling_ClipsShortSpikes()
+    {
+        var values = Bulk();
+        values[150] = values[151] = 200 * Mb; // One gen 2 GC: two samples at 25× the bulk.
+        Assert.Equal(10 * Mb, AxisScale.SpikeAwareCeiling(values, new float[values.Length], MetricUnit.BytesPerSecond), 0);
+    }
+
+    [Fact]
+    public void SpikeAwareCeiling_KeepsSustainedPeaksAndModestSpikes()
+    {
+        var sustained = Bulk();
+        for (var i = 270; i < 300; i++) // 10 % of the window: part of the bulk.
+            sustained[i] = 200 * Mb;
+        Assert.Equal(200 * Mb, AxisScale.SpikeAwareCeiling(sustained, new float[300], MetricUnit.BytesPerSecond), 0);
+
+        var modest = Bulk();
+        modest[10] = 20 * Mb; // Under 3× the bulk.
+        Assert.Equal(20 * Mb, AxisScale.SpikeAwareCeiling(modest, new float[300], MetricUnit.BytesPerSecond), 0);
+    }
+
+    [Fact]
+    public void SpikeAwareCeiling_NeverClipsRareEvents()
+    {
+        var values = new float[300];
+        values[42] = 37; // Exceptions/s: zero bulk, the burst is the signal.
+        Assert.Equal(50, AxisScale.SpikeAwareCeiling(values, new float[300], MetricUnit.PerSecond));
+        Assert.Equal(1, AxisScale.SpikeAwareCeiling([], [], MetricUnit.PerSecond));
+    }
+
     [Fact]
     public void Results_ExposeLastRun()
     {

@@ -25,6 +25,11 @@ Time series of one or more metrics, from the history. Default size 6×3, minimum
 Only metrics marked *chartable* below have history. Process series are sampled at the fast rate: NockMon keeps a handle
 on every matching process.
 
+The axis fits most of the data: when a few short spikes (under 3 % of the window) exceed three times the rest, they go
+above the axis, marked with a band on the top edge, and the highest one's value is shown (*peak 205 MB/s*). Hover a chart for the time
+and the series' values at the pointer; the same readout works on every graph: a value's sparkline, a folder's size, a
+per-CPU or GPU engine cell.
+
 ### Value
 
 One metric's latest value, large, over a sparkline. Default size 2×2, minimum 1×1.
@@ -34,7 +39,7 @@ One metric's latest value, large, over a sparkline. Default size 2×2, minimum 1
 | Source | Any series a chart can show. |
 | Sparkline | Time span of the sparkline (default 60 s). |
 
-An untitled value shows the metric's name on hover.
+An untitled value shows the metric's name when hovering the value.
 
 ### Value list
 
@@ -76,8 +81,8 @@ Engine names arrive a moment after start ("Engine N" until then).
 
 A folder's size and file count over time: a downloads or temp folder filling up, a build output, a log or cache folder
 that grows, a backup target. Shows the size, the file count, the growth over the window ("+1.2 GB, +340 files in 1 h")
-and the size over time, with an axis fitted to the data so growth shows on a large folder. Hover for the last scan
-(when, how long, unreadable folders) and the largest subfolders, also listed under the chart when the widget is tall
+and the size over time, with an axis fitted to the data so growth shows on a large folder. Hover the text for the last
+scan (when, how long, unreadable folders) and the largest subfolders, also listed under the chart when the widget is tall
 enough. Double-click opens the folder. Default size 5×4, minimum 2×2.
 
 | Option | Meaning |
@@ -208,7 +213,9 @@ values only.
 
 - **system**: the whole machine.
 - **core**: one logical processor (chart target: its index).
-- **process**: processes. In charts, the sum over the processes matching a name pattern.
+- **process**: processes. In charts, the sum over the processes matching a name pattern (the maximum for the longest
+  GC pause). Includes the .NET runtime metrics of .NET processes: GC pauses and counts, managed heap, allocated, freed and
+  survived bytes, exceptions, lock contentions.
 - **gpu**: a GPU adapter. Every vendor reports engine load and memory through the graphics kernel, plus temperature,
   fan speed, memory clock and power percentage when the driver exposes them. NVIDIA GPUs add utilization, power in
   watts, clocks and encoder/decoder load through NVML.
@@ -319,6 +326,19 @@ values only.
 | `process.NetRecv` | Network receive | MB/s | no | TCP and UDP payload bytes received per second by the process. |
 | `process.NetBytes` | Network throughput | MB/s | yes | TCP and UDP payload bytes sent + received per second by the process. |
 | `process.Gpu` | GPU (NVIDIA) | % | yes | GPU utilization of the process on NVIDIA GPUs (NVML), summed over GPUs. |
+| `process.GcPause` | .NET GC pause time | % | yes | Share of the time the process's managed threads were stopped for garbage collections. |
+| `process.GcPauseMax` | .NET longest GC pause | ms | yes | Longest time the managed threads were stopped by one GC suspension in the interval. The maximum over processes, not the sum. |
+| `process.Gcs` | .NET GCs | /s | yes | Garbage collections started per second, all generations. |
+| `process.Gen2Gcs` | .NET gen 2 GCs | /s | yes | Full (generation 2) garbage collections started per second, background ones included. |
+| `process.ManagedHeap` | .NET managed heap | MB | yes | Size of the managed heap after the process's last GC: every generation, large and pinned object heaps. |
+| `process.Allocations` | .NET allocation rate | MB/s | yes | Bytes allocated on the managed heap per second. |
+| `process.Freed` | .NET freed by GCs | MB/s | yes | Bytes released per second by the process's garbage collections. |
+| `process.Promoted` | .NET survived GCs | MB/s | yes | Bytes per second that survived the process's garbage collections. |
+| `process.Exceptions` | .NET exceptions | /s | yes | Managed exceptions thrown per second, caught or not. |
+| `process.Contentions` | .NET lock contentions | /s | yes | Times per second a thread had to wait for a managed lock held by another thread. |
+
+The `.NET` metrics come from the .NET runtime's ETW events, which every .NET Framework and .NET process emits without
+any setting or restart, including processes started before NockMon. They are 0 for processes that are not .NET.
 
 ### gpu
 

@@ -85,7 +85,9 @@ public sealed class MonitorTools(MonitorQueries queries)
 
     [McpServerTool(Name = "get_process", Title = "Process details", ReadOnly = true, Idempotent = false, OpenWorld = false)]
     [Description("An application in detail: its current instances (PID, parent, start time, CPU, memory, handles, threads, I/O, disk, " +
-                 "network, GPU) and the history of its metrics over the last minutes (average, max and when, last), instances summed.")]
+                 "network, GPU; for .NET processes, dotNet: GC pause time and longest pause, GCs, managed heap, allocated, freed and survived bytes, exceptions, " +
+                 "lock contentions) and the history of its metrics over the last minutes (average, max and when, last), instances summed " +
+                 "(the longest GC pause: their maximum).")]
     public ProcessDetails GetProcess(
         [Description("Image name pattern: \"chrome\", \"devenv.exe\", \"msbuild;dotnet\", \"svc*\".")] string name,
         [Description("History range in minutes (from now).")] double minutes = 10) =>

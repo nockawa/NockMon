@@ -22,6 +22,12 @@ public static partial class Docs
         "**Source:** kernel ETW events (private real-time session, needs administrator rights), summed per process " +
         "over the scan interval.";
 
+    private const string DotNetNote =
+        "**Source:** .NET runtime ETW events (provider `Microsoft-Windows-DotNETRuntime`, in NockMon's ETW session, needs " +
+        "administrator rights). Every .NET Framework and .NET process emits them, without any setting, flag or restart of the " +
+        "process, including those started before NockMon. 0 for processes that are not .NET; native AOT applications may " +
+        "emit only part of them.";
+
     private static Doc D(string title, string summary, string details) => new(title, summary, details);
 
     public static Doc Of(ProcessField field)
@@ -275,6 +281,92 @@ public static partial class Docs
 
                 **Rate:** process scan.
                 """),
+            ProcessField.GcPause => D(title,
+                "Share of the time the process's managed threads were stopped for garbage collections.",
+                """
+                Each GC suspends the managed threads: once for a blocking GC, briefly at the start and end of a background (concurrent) gen 2 GC. This is the time between each suspension for a GC and the restart of the threads, as a percentage of the interval. The GC's concurrent work, while the threads run, is not counted.
+
+                - Under 1 % is typical; 5–10 % and more is a process spending real time in the GC: look at the allocation rate and gen 2 GCs.
+                - Summed over the instances of a name group or chart pattern.
+                - A pause counts in the interval it ends in (capped at 100 %).
+                """ + "\n\n" + DotNetNote + "\n\n" + ScanOnly),
+            ProcessField.GcPauseMax => D(title,
+                "Longest time the managed threads were stopped by one GC suspension in the interval.",
+                """
+                What users feel as hitches: a UI freeze, a request served late, a dropped frame.
+
+                - Gen 0 and gen 1 GCs usually pause well under 10 ms; a blocking gen 2 GC of a large heap can pause hundreds of milliseconds.
+                - Long pauses with background GC on usually mean a blocking gen 2 (heap compaction, low memory) or threads slow to reach a safe point.
+                - For a name group or chart pattern, the longest of the instances (not the sum).
+                """ + "\n\n" + DotNetNote + "\n\n" + ScanOnly),
+            ProcessField.Gcs => D(title,
+                "Garbage collections started per second, all generations.",
+                """
+                Mostly gen 0 GCs, triggered each time the allocation budget of generation 0 is used up: their rate follows the allocation rate.
+
+                - Tens per second is common for allocation-heavy code; each is cheap, but the sum is the GC pause time.
+                - `GC.Collect` calls and low-memory notifications also start GCs.
+                """ + "\n\n" + DotNetNote + "\n\n" + ScanOnly),
+            ProcessField.Gen2Gcs => D(title,
+                "Full (generation 2) garbage collections started per second, background ones included.",
+                """
+                A gen 2 GC examines the whole heap: it is the expensive kind.
+
+                - Regular gen 2 GCs mean objects survive long enough to be promoted, then die (mid-life crisis): caches, buffers kept a while.
+                - Frequent ones with a large heap cost CPU and pauses; large object heap allocations (85 KB and more) also trigger them.
+                - `GC.Collect()` without arguments is a gen 2.
+                """ + "\n\n" + DotNetNote + "\n\n" + ScanOnly),
+            ProcessField.ManagedHeap => D(title,
+                "Size of the managed heap after the process's last GC: every generation, large and pinned object heaps.",
+                """
+                The sum of the generation sizes the GC reports at the end of each GC (gen 0, 1, 2, the large object heap and, on .NET 5+, the pinned object heap).
+
+                - Measured at GCs only: it holds between two GCs, and stays 0 until the process's first GC after NockMon started.
+                - Objects allocated since the last GC are not included; the GC's committed memory is larger (free space, fragmentation): compare with private bytes.
+                - A heap that grows after every gen 2 GC means something keeps objects alive: a leak.
+                """ + "\n\n" + DotNetNote + "\n\n" + ScanOnly),
+            ProcessField.Allocations => D(title,
+                "Bytes allocated on the managed heap per second.",
+                """
+                From the runtime's allocation ticks: one event about every 100 KB allocated, carrying the bytes allocated since the previous one. Precise over seconds; a process allocating less than 100 KB per interval shows in steps.
+
+                - What drives gen 0 GCs: the lower, the fewer GCs.
+                - Hundreds of MB/s is a lot of short-lived garbage: strings, LINQ, boxing, closures, buffers not pooled.
+                """ + "\n\n" + DotNetNote + "\n\n" + ScanOnly),
+            ProcessField.Freed => D(title,
+                "Bytes released per second by the process's garbage collections.",
+                """
+                Not reported by the GC: derived at the end of each GC as the heap before it (the heap after the previous GC plus what was allocated since) minus the heap after it.
+
+                - Comes in steps: memory is released only at GCs, so it is 0 between them and jumps at each one. Allocation is smooth; release is not.
+                - Over a chart's window, allocated minus freed is the heap's growth: freed well under allocated for minutes is memory kept alive.
+                - Approximate per GC (allocation ticks lag by up to ~100 KB), exact over time; unknown for the first GC seen after NockMon started.
+                """ + "\n\n" + DotNetNote + "\n\n" + ScanOnly),
+            ProcessField.Promoted => D(title,
+                "Bytes per second that survived the process's garbage collections.",
+                """
+                The objects still alive when a GC examined them, all condemned generations (the GC's promoted bytes): moved to the next generation, or kept in generation 2 by a full GC.
+
+                - What a GC costs is mostly what survives: copying and marking live objects. Allocation that dies young is cheap.
+                - High survival with regular gen 2 GCs means objects live just long enough to be promoted, then die (mid-life crisis): caches and buffers held a while.
+                - A gen 2 GC counts every live object of the heap: survival spikes at each one.
+                """ + "\n\n" + DotNetNote + "\n\n" + ScanOnly),
+            ProcessField.Exceptions => D(title,
+                "Managed exceptions thrown per second, caught or not.",
+                """
+                Every throw counts, including exceptions caught and handled by the code (a first-chance exception).
+
+                - Throwing costs microseconds to milliseconds (stack walk): a steady rate is exceptions used for control flow, or a failure retried in a loop.
+                - The Process events widget does not list them; a debugger or `dotnet-trace` gives their types.
+                """ + "\n\n" + DotNetNote + "\n\n" + ScanOnly),
+            ProcessField.Contentions => D(title,
+                "Times per second a thread had to wait for a managed lock held by another thread.",
+                """
+                Counted when acquiring a `lock` (Monitor), and on .NET 9+ `System.Threading.Lock`, finds it held and the thread has to spin or block.
+
+                - Hundreds or thousands per second on a busy server is a lock in the hot path: threads queue behind each other and CPUs stay idle.
+                - Uncontended locks are not counted.
+                """ + "\n\n" + DotNetNote + "\n\n" + ScanOnly),
             _ => throw new ArgumentOutOfRangeException(nameof(field), field, null),
         };
     }

@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using NockMon.Sdk;
 using ServiceStatus.NockMon.Status;
@@ -321,7 +320,9 @@ internal sealed class StatusWidget : IPluginWidget
     /// <summary>Content as a flat button whose flyout details <paramref name="states"/>; closing it acknowledges changes.</summary>
     private Button Clickable(UIElement content, IReadOnlyList<ServiceState> states, bool stretch = true)
     {
-        var flyout = new Flyout { Placement = FlyoutPlacementMode.Auto };
+        // Default placement (top, else another side): Auto fails fast in XAML when the flyout opens (E_INVALIDARG, or a
+        // metadata lookup of a null type), on every click.
+        var flyout = new Flyout();
         flyout.Opening += (_, _) => flyout.Content = new ScrollViewer
         {
             MaxHeight = 480,
