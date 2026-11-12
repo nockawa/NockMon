@@ -14,7 +14,7 @@
 
     <!-- First-party: under the NockMon name (the plugin id, stored in layouts). -->
     <PackageId>NockMon.ServiceStatus</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Title>Service status</Title>
     <Authors>nockawa</Authors>
     <Description>NockMon widget: the status of the online services you follow (Claude, OpenAI, GitHub, GitLab, Cloudflare, AWS, Azure, Google Cloud, Slack and 30 more, or any Statuspage, incident.io or status.io page), from their public status pages: one icon at the smallest size, up to incidents and their latest updates. Their states can be recorded in NockMon's history.</Description>
